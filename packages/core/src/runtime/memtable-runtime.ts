@@ -7,6 +7,13 @@ import type {
   RecordEntry,
   RejectOptions
 } from "../ledger/types.js";
+import {
+  loadLocalPack,
+  queryNameFromJson,
+  schemaNameFromJson,
+  schemaVersionFromJson
+} from "../pack/local-pack.js";
+import type { InstalledPack, PackInstallResult, QueryTemplate, RegisteredSchema } from "../pack/types.js";
 import { SqliteStore } from "../storage/sqlite-store.js";
 
 export interface MemTableRuntimeOptions {
@@ -47,6 +54,53 @@ export class MemTableRuntime {
 
   async createProposal(input: ProposalInput): Promise<Proposal> {
     return this.store.createProposal(input);
+  }
+
+  async installPack(sourcePath: string): Promise<PackInstallResult> {
+    const localPack = await loadLocalPack(sourcePath);
+    return this.store.transaction(() => {
+      const pack = this.store.upsertPack({
+        name: localPack.manifest.name,
+        version: localPack.manifest.version,
+        source: localPack.sourcePath,
+        manifest: localPack.manifest
+      });
+      const schemas = localPack.schemas.map(({ schema }) =>
+        this.store.upsertSchema({
+          pack_id: pack.id,
+          name: schemaNameFromJson(schema),
+          version: schemaVersionFromJson(schema),
+          schema
+        })
+      );
+      const query_templates = localPack.queries.map(({ path, query }) => {
+        const description = typeof query.description === "string" ? query.description : undefined;
+        return this.store.upsertQueryTemplate({
+          pack_id: pack.id,
+          name: queryNameFromJson(query, path),
+          query,
+          ...(description ? { description } : {})
+        });
+      });
+
+      return {
+        pack,
+        schemas,
+        query_templates
+      };
+    });
+  }
+
+  async listPacks(): Promise<InstalledPack[]> {
+    return this.store.listPacks();
+  }
+
+  async listSchemas(): Promise<RegisteredSchema[]> {
+    return this.store.listSchemas();
+  }
+
+  async listQueryTemplates(): Promise<QueryTemplate[]> {
+    return this.store.listQueryTemplates();
   }
 
   async listProposals(status?: ProposalStatus): Promise<Proposal[]> {

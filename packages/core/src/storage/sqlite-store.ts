@@ -12,8 +12,14 @@ import type {
   Source,
   SourceInput
 } from "../ledger/types.js";
+import type {
+  InstalledPack,
+  PackManifest,
+  QueryTemplate,
+  RegisteredSchema
+} from "../pack/types.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 type Row = Record<string, unknown>;
 
@@ -50,11 +56,13 @@ export class SqliteStore {
       .prepare("SELECT MAX(version) AS version FROM mt_migrations")
       .get() as { version: number | null };
 
-    if ((current.version ?? 0) >= SCHEMA_VERSION) {
+    const currentVersion = current.version ?? 0;
+    if (currentVersion >= SCHEMA_VERSION) {
       return;
     }
 
-    this.transaction(() => {
+    if (currentVersion < 1) {
+      this.transaction(() => {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS mt_packs (
           id TEXT PRIMARY KEY,
@@ -153,8 +161,177 @@ export class SqliteStore {
       `);
       this.db
         .prepare("INSERT OR IGNORE INTO mt_migrations (version, applied_at) VALUES (?, ?)")
-        .run(SCHEMA_VERSION, now());
-    });
+        .run(1, now());
+      });
+    }
+
+    if (currentVersion < 2) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS mt_query_templates (
+            id TEXT PRIMARY KEY,
+            pack_id TEXT,
+            name TEXT NOT NULL,
+            description TEXT,
+            query_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(pack_id, name)
+          );
+        `);
+        this.db
+          .prepare("INSERT OR IGNORE INTO mt_migrations (version, applied_at) VALUES (?, ?)")
+          .run(2, now());
+      });
+    }
+  }
+
+  upsertPack(input: {
+    name: string;
+    version: string;
+    source: string;
+    manifest: PackManifest;
+    status?: string;
+  }): InstalledPack {
+    const timestamp = now();
+    const existing = this.db.prepare("SELECT * FROM mt_packs WHERE name = ?").get(input.name) as Row | undefined;
+    const pack: InstalledPack = {
+      id: existing ? String(existing.id) : randomUUID(),
+      name: input.name,
+      version: input.version,
+      source: input.source,
+      manifest: input.manifest,
+      status: input.status ?? "installed",
+      installed_at: existing ? String(existing.installed_at) : timestamp,
+      updated_at: timestamp
+    };
+
+    this.db
+      .prepare(`
+        INSERT INTO mt_packs (
+          id, name, version, source, manifest_json, status, installed_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          version = excluded.version,
+          source = excluded.source,
+          manifest_json = excluded.manifest_json,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        pack.id,
+        pack.name,
+        pack.version,
+        pack.source,
+        JSON.stringify(pack.manifest),
+        pack.status,
+        pack.installed_at,
+        pack.updated_at
+      );
+
+    return pack;
+  }
+
+  listPacks(): InstalledPack[] {
+    return (this.db.prepare("SELECT * FROM mt_packs ORDER BY name ASC").all() as Row[]).map(packFromRow);
+  }
+
+  upsertSchema(input: {
+    pack_id?: string;
+    name: string;
+    version?: string;
+    schema: Record<string, unknown>;
+    status?: string;
+  }): RegisteredSchema {
+    const timestamp = now();
+    const version = input.version ?? "1";
+    const existing = this.db
+      .prepare("SELECT * FROM mt_schemas WHERE name = ? AND version = ?")
+      .get(input.name, version) as Row | undefined;
+    const schema: RegisteredSchema = {
+      id: existing ? String(existing.id) : randomUUID(),
+      name: input.name,
+      version,
+      schema: input.schema,
+      status: input.status ?? "active",
+      created_at: existing ? String(existing.created_at) : timestamp,
+      updated_at: timestamp
+    };
+    assignOptional(schema, "pack_id", input.pack_id);
+
+    this.db
+      .prepare(`
+        INSERT INTO mt_schemas (
+          id, pack_id, name, version, schema_json, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name, version) DO UPDATE SET
+          pack_id = excluded.pack_id,
+          schema_json = excluded.schema_json,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        schema.id,
+        schema.pack_id ?? null,
+        schema.name,
+        schema.version,
+        JSON.stringify(schema.schema),
+        schema.status,
+        schema.created_at,
+        schema.updated_at
+      );
+
+    return schema;
+  }
+
+  listSchemas(): RegisteredSchema[] {
+    return (this.db.prepare("SELECT * FROM mt_schemas ORDER BY name ASC, version ASC").all() as Row[]).map(
+      schemaFromRow
+    );
+  }
+
+  upsertQueryTemplate(input: {
+    pack_id?: string;
+    name: string;
+    description?: string;
+    query: Record<string, unknown>;
+  }): QueryTemplate {
+    const existing = this.db
+      .prepare("SELECT * FROM mt_query_templates WHERE pack_id IS ? AND name = ?")
+      .get(input.pack_id ?? null, input.name) as Row | undefined;
+    const template: QueryTemplate = {
+      id: existing ? String(existing.id) : randomUUID(),
+      name: input.name,
+      query: input.query,
+      created_at: existing ? String(existing.created_at) : now()
+    };
+    assignOptional(template, "pack_id", input.pack_id);
+    assignOptional(template, "description", input.description);
+
+    this.db
+      .prepare(`
+        INSERT INTO mt_query_templates (
+          id, pack_id, name, description, query_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(pack_id, name) DO UPDATE SET
+          description = excluded.description,
+          query_json = excluded.query_json
+      `)
+      .run(
+        template.id,
+        template.pack_id ?? null,
+        template.name,
+        template.description ?? null,
+        JSON.stringify(template.query),
+        template.created_at
+      );
+
+    return template;
+  }
+
+  listQueryTemplates(): QueryTemplate[] {
+    return (this.db.prepare("SELECT * FROM mt_query_templates ORDER BY name ASC").all() as Row[]).map(
+      queryTemplateFromRow
+    );
   }
 
   createSource(input: SourceInput): Source {
@@ -375,7 +552,7 @@ export class SqliteStore {
       );
   }
 
-  private transaction<T>(fn: () => T): T {
+  transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN");
     try {
       const result = fn();
@@ -421,6 +598,45 @@ function recordFromRow(row: Row): RecordEntry {
   return record;
 }
 
+function packFromRow(row: Row): InstalledPack {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    version: String(row.version),
+    source: String(row.source),
+    manifest: JSON.parse(String(row.manifest_json)) as PackManifest,
+    status: String(row.status),
+    installed_at: String(row.installed_at),
+    updated_at: String(row.updated_at)
+  };
+}
+
+function schemaFromRow(row: Row): RegisteredSchema {
+  const schema: RegisteredSchema = {
+    id: String(row.id),
+    name: String(row.name),
+    version: String(row.version),
+    schema: JSON.parse(String(row.schema_json)) as Record<string, unknown>,
+    status: String(row.status),
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at)
+  };
+  assignOptional(schema, "pack_id", nullableString(row.pack_id));
+  return schema;
+}
+
+function queryTemplateFromRow(row: Row): QueryTemplate {
+  const template: QueryTemplate = {
+    id: String(row.id),
+    name: String(row.name),
+    query: JSON.parse(String(row.query_json)) as Record<string, unknown>,
+    created_at: String(row.created_at)
+  };
+  assignOptional(template, "pack_id", nullableString(row.pack_id));
+  assignOptional(template, "description", nullableString(row.description));
+  return template;
+}
+
 function assignOptional<T extends object, K extends keyof T>(target: T, key: K, value: T[K] | undefined): void {
   if (value !== undefined) {
     target[key] = value;
@@ -451,4 +667,3 @@ function getString(data: Record<string, unknown>, key: string): string | undefin
   const value = data[key];
   return typeof value === "string" ? value : undefined;
 }
-

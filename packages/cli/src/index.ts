@@ -12,6 +12,12 @@ try {
     printHelp();
   } else if (command === "init") {
     await init();
+  } else if (command === "pack") {
+    await pack(args.slice(1));
+  } else if (command === "schema") {
+    await schema(args.slice(1));
+  } else if (command === "query-template") {
+    await queryTemplate(args.slice(1));
   } else if (command === "proposal") {
     await proposal(args.slice(1));
   } else if (command === "record") {
@@ -27,6 +33,10 @@ try {
 function printHelp(): void {
   console.log(`memtable commands:
   init
+  pack install <path>
+  pack list
+  schema list
+  query-template list
   proposal list [status]
   proposal commit <id>
   proposal reject <id>
@@ -54,6 +64,55 @@ async function init(): Promise<void> {
   const runtime = await openRuntime();
   runtime.close();
   console.log(`Initialized MemTable at ${dbPath}`);
+}
+
+async function pack(args: string[]): Promise<void> {
+  const subcommand = args[0] ?? "list";
+  const runtime = await openRuntime();
+  try {
+    if (subcommand === "install") {
+      const sourcePath = requiredArg(args[1], "pack path");
+      const result = await runtime.installPack(sourcePath);
+      printJson(result);
+    } else if (subcommand === "list") {
+      const packs = await runtime.listPacks();
+      printJson(packs);
+    } else {
+      throw new Error(`Unknown pack command: ${subcommand}`);
+    }
+  } finally {
+    runtime.close();
+  }
+}
+
+async function schema(args: string[]): Promise<void> {
+  const subcommand = args[0] ?? "list";
+  if (subcommand !== "list") {
+    throw new Error(`Unknown schema command: ${subcommand}`);
+  }
+
+  const runtime = await openRuntime();
+  try {
+    const schemas = await runtime.listSchemas();
+    printJson(schemas);
+  } finally {
+    runtime.close();
+  }
+}
+
+async function queryTemplate(args: string[]): Promise<void> {
+  const subcommand = args[0] ?? "list";
+  if (subcommand !== "list") {
+    throw new Error(`Unknown query-template command: ${subcommand}`);
+  }
+
+  const runtime = await openRuntime();
+  try {
+    const templates = await runtime.listQueryTemplates();
+    printJson(templates);
+  } finally {
+    runtime.close();
+  }
 }
 
 async function proposal(args: string[]): Promise<void> {
