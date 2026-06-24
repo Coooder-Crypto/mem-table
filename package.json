@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "test": "pnpm build && pnpm -r test",
+    "typecheck": "pnpm build && pnpm -r typecheck"
   },
   "keywords": [
     "agent",
@@ -22,4 +22,3 @@
   },
   "packageManager": "pnpm@10.27.0"
 }
-
