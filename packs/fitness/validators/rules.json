@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "field": "weight_kg",
+      "op": "between",
+      "value": [1, 500]
+    },
+    {
+      "field": "occurred_at",
+      "op": "not_future"
+    }
+  ]
+}
+

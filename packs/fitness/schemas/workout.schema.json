@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fitness.workout",
+  "title": "Workout",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["exercise", "occurred_at"],
+  "properties": {
+    "exercise": {
+      "type": "string"
+    },
+    "weight_kg": {
+      "type": "number",
+      "minimum": 0
+    },
+    "reps": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sets": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
+

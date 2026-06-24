@@ -1,0 +1,30 @@
+{
+  "name": "fitness",
+  "version": "0.1.0",
+  "memtable": ">=0.1.0",
+  "description": "Structured fitness ledger for workouts and body metrics.",
+  "observe": {
+    "eventTypes": ["user_message", "tool_result", "agent_end"],
+    "keywords": ["卧推", "体重", "训练", "bench", "workout"]
+  },
+  "writePolicy": {
+    "default": "proposal",
+    "autoCommitConfidence": 0.92
+  },
+  "schemas": [
+    "schemas/workout.schema.json",
+    "schemas/body_weight.schema.json"
+  ],
+  "extractors": [
+    "extractors/prompts.md"
+  ],
+  "queries": [
+    "queries/bench_progress.query.json",
+    "queries/weekly_volume.query.json"
+  ],
+  "validators": [
+    "validators/rules.json"
+  ],
+  "tools": "tools/mcp.json"
+}
+

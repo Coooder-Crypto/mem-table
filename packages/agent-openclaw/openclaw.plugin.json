@@ -1,0 +1,23 @@
+{
+  "id": "memtable",
+  "name": "MemTable",
+  "description": "Structured ledger enhancer for OpenClaw agents.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "endpoint": {
+        "type": "string",
+        "default": "http://127.0.0.1:3838"
+      },
+      "observe": {
+        "type": "boolean",
+        "default": true
+      }
+    }
+  }
+}
+

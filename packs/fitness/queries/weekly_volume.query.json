@@ -1,0 +1,15 @@
+{
+  "name": "weekly_volume",
+  "collection": "fitness.workout",
+  "aggregate": {
+    "total_volume": {
+      "op": "sum",
+      "field": "weight_kg"
+    }
+  },
+  "groupBy": {
+    "field": "occurred_at",
+    "interval": "week"
+  }
+}
+
