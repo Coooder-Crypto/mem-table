@@ -25,6 +25,8 @@ try {
     await ask(args.slice(1));
   } else if (command === "serve") {
     await serve(args.slice(1));
+  } else if (command === "agent") {
+    await agent(args.slice(1));
   } else if (command === "proposal") {
     await proposal(args.slice(1));
   } else if (command === "record") {
@@ -48,6 +50,7 @@ function printHelp(): void {
   ask <question>
   serve --http [--port 3838]
   serve --mcp
+  agent enable openclaw [--endpoint http://127.0.0.1:3838]
   proposal list [status]
   proposal commit <id>
   proposal reject <id>
@@ -117,6 +120,41 @@ async function serve(args: string[]): Promise<void> {
   process.once("SIGTERM", () => {
     void shutdown();
   });
+}
+
+async function agent(args: string[]): Promise<void> {
+  const subcommand = args[0];
+  const agentName = args[1];
+  if (subcommand !== "enable") {
+    throw new Error(`Unknown agent command: ${subcommand ?? ""}`);
+  }
+  if (agentName !== "openclaw") {
+    throw new Error(`Unsupported agent enhancer: ${agentName ?? ""}`);
+  }
+
+  const endpoint = readFlag(args, "--endpoint") ?? "http://127.0.0.1:3838";
+  await mkdir(".memtable/agents", { recursive: true });
+  await writeFile(
+    ".memtable/agents/openclaw.json",
+    `${JSON.stringify(
+      {
+        agent: "openclaw",
+        endpoint,
+        package: "@memtable/openclaw-plugin",
+        pluginId: "memtable",
+        enabledAt: new Date().toISOString(),
+        install: [
+          "openclaw plugins install npm:@memtable/openclaw-plugin",
+          "openclaw plugins enable memtable",
+          "openclaw gateway restart"
+        ]
+      },
+      null,
+      2
+    )}\n`
+  );
+  console.log(`Configured OpenClaw enhancer at ${endpoint}`);
+  console.log("Install with: openclaw plugins install npm:@memtable/openclaw-plugin");
 }
 
 async function pack(args: string[]): Promise<void> {
