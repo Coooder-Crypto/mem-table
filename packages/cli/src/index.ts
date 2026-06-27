@@ -3,6 +3,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MemTableRuntime } from "@memtable/core";
+import { startHttpServer } from "@memtable/server";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
@@ -18,6 +19,8 @@ try {
     await schema(args.slice(1));
   } else if (command === "query-template") {
     await queryTemplate(args.slice(1));
+  } else if (command === "serve") {
+    await serve(args.slice(1));
   } else if (command === "proposal") {
     await proposal(args.slice(1));
   } else if (command === "record") {
@@ -37,6 +40,7 @@ function printHelp(): void {
   pack list
   schema list
   query-template list
+  serve --http [--port 3838]
   proposal list [status]
   proposal commit <id>
   proposal reject <id>
@@ -64,6 +68,36 @@ async function init(): Promise<void> {
   const runtime = await openRuntime();
   runtime.close();
   console.log(`Initialized MemTable at ${dbPath}`);
+}
+
+async function serve(args: string[]): Promise<void> {
+  const http = args.includes("--http");
+  if (!http) {
+    throw new Error("Only --http serve mode is implemented");
+  }
+
+  const port = Number(readFlag(args, "--port") ?? "3838");
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error(`Invalid --port value: ${String(readFlag(args, "--port"))}`);
+  }
+
+  const handle = await startHttpServer({
+    http: true,
+    port,
+    storagePath: ".memtable/memtable.db"
+  });
+  console.log(`MemTable HTTP observer listening at ${handle.url}`);
+
+  const shutdown = async () => {
+    await handle.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", () => {
+    void shutdown();
+  });
+  process.once("SIGTERM", () => {
+    void shutdown();
+  });
 }
 
 async function pack(args: string[]): Promise<void> {
@@ -172,4 +206,12 @@ function requiredArg(value: string | undefined, name: string): string {
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+function readFlag(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index < 0) {
+    return undefined;
+  }
+  return args[index + 1];
 }

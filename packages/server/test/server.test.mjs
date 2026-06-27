@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { MemTableRuntime } from "@memtable/core";
+import { handleHttpRequest } from "../dist/index.js";
 
 test("server package declares HTTP and MCP modes", async () => {
   const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
@@ -8,3 +13,41 @@ test("server package declares HTTP and MCP modes", async () => {
   assert.match(source, /mcp/);
 });
 
+test("http observer creates fitness proposals", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  await runtime.installPack(fileURLToPath(new URL("../../../packs/fitness", import.meta.url)));
+
+  try {
+    const observeResponse = await handleHttpRequest(runtime, {
+      method: "POST",
+      url: "/v1/observe",
+      body: {
+        id: "evt_server_1",
+        agent: "custom",
+        event_type: "user_message",
+        role: "user",
+        content: "今天卧推 65kg 5x5，体重 90.4kg",
+        occurred_at: "2026-06-27T10:00:00.000Z"
+      }
+    });
+    assert.equal(observeResponse.statusCode, 200);
+    const observeResult = observeResponse.body;
+    assert.equal(observeResult.proposals_created, 2);
+
+    const proposalsResponse = await handleHttpRequest(runtime, {
+      method: "GET",
+      url: "/v1/proposals"
+    });
+    assert.equal(proposalsResponse.statusCode, 200);
+    const proposals = proposalsResponse.body;
+    assert.equal(proposals.length, 2);
+  } finally {
+    runtime.close();
+  }
+});

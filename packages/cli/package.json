@@ -16,10 +16,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@memtable/core": "workspace:*"
+    "@memtable/core": "workspace:*",
+    "@memtable/server": "workspace:*"
   },
   "files": [
     "dist"
   ]
 }
-

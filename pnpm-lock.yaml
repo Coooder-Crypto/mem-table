@@ -24,6 +24,9 @@ importers:
       '@memtable/core':
         specifier: workspace:*
         version: link:../core
+      '@memtable/server':
+        specifier: workspace:*
+        version: link:../server
 
   packages/core: {}
 
