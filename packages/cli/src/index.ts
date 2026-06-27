@@ -50,6 +50,7 @@ function printHelp(): void {
   ask <question>
   serve --http [--port 3838]
   serve --mcp
+  agent enable hermes [--endpoint http://127.0.0.1:3838]
   agent enable openclaw [--endpoint http://127.0.0.1:3838]
   proposal list [status]
   proposal commit <id>
@@ -128,33 +129,72 @@ async function agent(args: string[]): Promise<void> {
   if (subcommand !== "enable") {
     throw new Error(`Unknown agent command: ${subcommand ?? ""}`);
   }
-  if (agentName !== "openclaw") {
-    throw new Error(`Unsupported agent enhancer: ${agentName ?? ""}`);
-  }
 
   const endpoint = readFlag(args, "--endpoint") ?? "http://127.0.0.1:3838";
+  if (agentName === "hermes") {
+    await writeAgentConfig({
+      agent: "hermes",
+      endpoint,
+      packageName: "@memtable/agent-hermes",
+      pluginId: "memtable",
+      install: [
+        "npm install -g @memtable/agent-hermes",
+        "hermes plugins install Coooder-Crypto/memtable-hermes --enable",
+        "hermes gateway restart"
+      ]
+    });
+    console.log(`Configured Hermes enhancer at ${endpoint}`);
+    console.log("Install with: hermes plugins install Coooder-Crypto/memtable-hermes --enable");
+    return;
+  }
+
+  if (agentName === "openclaw") {
+    await writeAgentConfig({
+      agent: "openclaw",
+      endpoint,
+      packageName: "@memtable/openclaw-plugin",
+      pluginId: "memtable",
+      install: [
+        "openclaw plugins install npm:@memtable/openclaw-plugin",
+        "openclaw plugins enable memtable",
+        "openclaw gateway restart"
+      ]
+    });
+    console.log(`Configured OpenClaw enhancer at ${endpoint}`);
+    console.log("Install with: openclaw plugins install npm:@memtable/openclaw-plugin");
+    return;
+  }
+
+  throw new Error(`Unsupported agent enhancer: ${agentName ?? ""}`);
+}
+
+async function writeAgentConfig(input: {
+  agent: string;
+  endpoint: string;
+  packageName: string;
+  pluginId: string;
+  install: string[];
+}): Promise<void> {
+  if (!input.agent) {
+    throw new Error("Missing agent enhancer name");
+  }
+
   await mkdir(".memtable/agents", { recursive: true });
   await writeFile(
-    ".memtable/agents/openclaw.json",
+    `.memtable/agents/${input.agent}.json`,
     `${JSON.stringify(
       {
-        agent: "openclaw",
-        endpoint,
-        package: "@memtable/openclaw-plugin",
-        pluginId: "memtable",
+        agent: input.agent,
+        endpoint: input.endpoint,
+        package: input.packageName,
+        pluginId: input.pluginId,
         enabledAt: new Date().toISOString(),
-        install: [
-          "openclaw plugins install npm:@memtable/openclaw-plugin",
-          "openclaw plugins enable memtable",
-          "openclaw gateway restart"
-        ]
+        install: input.install
       },
       null,
       2
     )}\n`
   );
-  console.log(`Configured OpenClaw enhancer at ${endpoint}`);
-  console.log("Install with: openclaw plugins install npm:@memtable/openclaw-plugin");
 }
 
 async function pack(args: string[]): Promise<void> {
