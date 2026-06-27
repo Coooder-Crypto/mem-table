@@ -335,6 +335,11 @@ export class SqliteStore {
     );
   }
 
+  getQueryTemplate(name: string): QueryTemplate | undefined {
+    const row = this.db.prepare("SELECT * FROM mt_query_templates WHERE name = ?").get(name) as Row | undefined;
+    return row ? queryTemplateFromRow(row) : undefined;
+  }
+
   getObservedEvent(agent: string, fingerprint: string): ObserveResult | undefined {
     const row = this.db
       .prepare("SELECT result_json FROM mt_observed_events WHERE agent = ? AND fingerprint = ?")

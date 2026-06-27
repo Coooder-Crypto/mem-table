@@ -16,6 +16,8 @@ import {
   schemaVersionFromJson
 } from "../pack/local-pack.js";
 import type { InstalledPack, PackInstallResult, QueryTemplate, RegisteredSchema } from "../pack/types.js";
+import { executeQuery } from "../query/engine.js";
+import type { AskResult, QueryDsl, QueryResult } from "../query/types.js";
 import { SqliteStore } from "../storage/sqlite-store.js";
 
 export interface MemTableRuntimeOptions {
@@ -144,6 +146,32 @@ export class MemTableRuntime {
     return this.store.listQueryTemplates();
   }
 
+  async query(query: QueryDsl): Promise<QueryResult> {
+    return executeQuery(this.store.listRecords(query.collection), query);
+  }
+
+  async queryTemplate(name: string): Promise<QueryResult> {
+    const template = this.store.getQueryTemplate(name);
+    if (!template) {
+      throw new Error(`Query template not found: ${name}`);
+    }
+    return this.query(template.query as unknown as QueryDsl);
+  }
+
+  async ask(question: string): Promise<AskResult> {
+    if (isBenchProgressQuestion(question)) {
+      const result = await this.queryTemplate("bench_progress");
+      return synthesizeBenchProgressAnswer(result);
+    }
+
+    return {
+      status: "insufficient_data",
+      answer: "当前只支持卧推进步或趋势类问题。",
+      records_used: 0,
+      source_ids: []
+    };
+  }
+
   async listProposals(status?: ProposalStatus): Promise<Proposal[]> {
     return this.store.listProposals(status);
   }
@@ -218,4 +246,45 @@ function eventText(event: AgentEvent): string {
     return JSON.stringify(event.tool_output);
   }
   return "";
+}
+
+function isBenchProgressQuestion(question: string): boolean {
+  const normalized = question.toLowerCase();
+  return (
+    (question.includes("卧推") || normalized.includes("bench")) &&
+    (question.includes("进步") || question.includes("趋势") || question.includes("增长") || normalized.includes("progress"))
+  );
+}
+
+function synthesizeBenchProgressAnswer(result: QueryResult): AskResult {
+  const rows = result.rows
+    .filter((row) => typeof row.group === "string" && typeof row.max_weight === "number")
+    .sort((left, right) => String(left.group).localeCompare(String(right.group)));
+
+  if (rows.length < 2) {
+    return {
+      status: "insufficient_data",
+      answer: "需要至少两个时间点的卧推记录才能判断趋势。",
+      records_used: result.records_used,
+      source_ids: result.source_ids,
+      query: result.query,
+      ...(result.time_range ? { time_range: result.time_range } : {})
+    };
+  }
+
+  const first = rows[0] as Record<string, unknown>;
+  const last = rows[rows.length - 1] as Record<string, unknown>;
+  const start = Number(first.max_weight);
+  const end = Number(last.max_weight);
+  const delta = end - start;
+  const direction = delta > 0 ? "提升" : delta < 0 ? "下降" : "持平";
+
+  return {
+    status: "ok",
+    answer: `基于 ${result.records_used} 条卧推记录，卧推最高训练重量从 ${start}kg 到 ${end}kg，${direction} ${Math.abs(delta)}kg。`,
+    records_used: result.records_used,
+    source_ids: result.source_ids,
+    query: result.query,
+    ...(result.time_range ? { time_range: result.time_range } : {})
+  };
 }

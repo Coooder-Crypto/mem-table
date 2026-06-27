@@ -149,3 +149,47 @@ test("runtime observes a fitness event and deduplicates repeated events", async 
 
   runtime.close();
 });
+
+test("runtime answers bench progress from committed records", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  await runtime.observe({
+    id: "evt_bench_1",
+    agent: "custom",
+    event_type: "user_message",
+    role: "user",
+    content: "今天卧推 60kg 5x5",
+    occurred_at: "2026-04-01T10:00:00.000Z"
+  });
+  await runtime.observe({
+    id: "evt_bench_2",
+    agent: "custom",
+    event_type: "user_message",
+    role: "user",
+    content: "今天卧推 70kg 5x5",
+    occurred_at: "2026-06-01T10:00:00.000Z"
+  });
+
+  for (const proposal of await runtime.listProposals()) {
+    await runtime.commitProposal(proposal.id, { actor: "test" });
+  }
+
+  const queryResult = await runtime.queryTemplate("bench_progress");
+  assert.equal(queryResult.records_used, 2);
+  assert.equal(queryResult.rows.length, 2);
+
+  const askResult = await runtime.ask("最近三个月卧推进步了吗？");
+  assert.equal(askResult.status, "ok");
+  assert.match(askResult.answer, /提升 10kg/);
+  assert.equal(askResult.records_used, 2);
+
+  runtime.close();
+});
