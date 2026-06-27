@@ -12,6 +12,7 @@ import type {
   Source,
   SourceInput
 } from "../ledger/types.js";
+import type { ObserveResult } from "../observe/types.js";
 import type {
   InstalledPack,
   PackManifest,
@@ -332,6 +333,47 @@ export class SqliteStore {
     return (this.db.prepare("SELECT * FROM mt_query_templates ORDER BY name ASC").all() as Row[]).map(
       queryTemplateFromRow
     );
+  }
+
+  getObservedEvent(agent: string, fingerprint: string): ObserveResult | undefined {
+    const row = this.db
+      .prepare("SELECT result_json FROM mt_observed_events WHERE agent = ? AND fingerprint = ?")
+      .get(agent, fingerprint) as Row | undefined;
+    if (!row?.result_json) {
+      return undefined;
+    }
+    return JSON.parse(String(row.result_json)) as ObserveResult;
+  }
+
+  insertObservedEvent(input: {
+    agent: string;
+    external_event_id?: string;
+    fingerprint: string;
+    status: string;
+    result?: ObserveResult;
+  }): boolean {
+    const result = this.db
+      .prepare(`
+        INSERT OR IGNORE INTO mt_observed_events (
+          id, agent, external_event_id, fingerprint, status, result_json, observed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        randomUUID(),
+        input.agent,
+        input.external_event_id ?? null,
+        input.fingerprint,
+        input.status,
+        input.result ? JSON.stringify(input.result) : null,
+        now()
+      );
+    return result.changes > 0;
+  }
+
+  updateObservedEventResult(agent: string, fingerprint: string, result: ObserveResult): void {
+    this.db
+      .prepare("UPDATE mt_observed_events SET status = ?, result_json = ? WHERE agent = ? AND fingerprint = ?")
+      .run(result.status, JSON.stringify(result), agent, fingerprint);
   }
 
   createSource(input: SourceInput): Source {

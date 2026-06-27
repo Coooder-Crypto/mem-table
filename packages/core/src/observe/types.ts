@@ -34,5 +34,5 @@ export interface ObserveResult {
   proposals_created: number;
   records_committed: number;
   needs_review: number;
+  duplicate?: boolean;
 }
-

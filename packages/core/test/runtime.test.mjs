@@ -109,3 +109,43 @@ test("runtime installs the local fitness pack idempotently", async () => {
 
   runtime.close();
 });
+
+test("runtime observes a fitness event and deduplicates repeated events", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const event = {
+    id: "evt_1",
+    agent: "custom",
+    event_type: "user_message",
+    role: "user",
+    content: "今天卧推 65kg 5x5，体重 90.4kg",
+    occurred_at: "2026-06-27T10:00:00.000Z"
+  };
+
+  const firstResult = await runtime.observe(event);
+  const secondResult = await runtime.observe(event);
+
+  assert.equal(firstResult.status, "ok");
+  assert.deepEqual(firstResult.matched_packs, ["fitness"]);
+  assert.equal(firstResult.proposals_created, 2);
+  assert.equal(firstResult.needs_review, 2);
+  assert.equal(secondResult.duplicate, true);
+  assert.equal(secondResult.proposals_created, 2);
+
+  const proposals = await runtime.listProposals();
+  assert.equal(proposals.length, 2);
+  assert.deepEqual(
+    proposals.map((proposal) => proposal.schema_name).sort(),
+    ["fitness.body_weight", "fitness.workout"]
+  );
+
+  runtime.close();
+});
