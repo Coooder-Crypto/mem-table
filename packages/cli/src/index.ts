@@ -3,7 +3,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MemTableRuntime } from "@memtable/core";
-import { startHttpServer } from "@memtable/server";
+import { startHttpServer, startMcpStdioServer } from "@memtable/server";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
@@ -47,6 +47,7 @@ function printHelp(): void {
   query <template_name>
   ask <question>
   serve --http [--port 3838]
+  serve --mcp
   proposal list [status]
   proposal commit <id>
   proposal reject <id>
@@ -78,8 +79,20 @@ async function init(): Promise<void> {
 
 async function serve(args: string[]): Promise<void> {
   const http = args.includes("--http");
-  if (!http) {
-    throw new Error("Only --http serve mode is implemented");
+  const mcp = args.includes("--mcp");
+  if (!http && !mcp) {
+    throw new Error("Expected --http or --mcp serve mode");
+  }
+  if (http && mcp) {
+    throw new Error("Use one serve mode at a time");
+  }
+
+  if (mcp) {
+    console.error("MemTable MCP server listening on stdio");
+    await startMcpStdioServer({
+      storagePath: ".memtable/memtable.db"
+    });
+    return;
   }
 
   const port = Number(readFlag(args, "--port") ?? "3838");

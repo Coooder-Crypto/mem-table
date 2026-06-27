@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { MemTableRuntime, type AgentEvent } from "@memtable/core";
+export { handleMcpRequest, startMcpStdioServer } from "./mcp.js";
 
 export interface ServerOptions {
   http?: boolean;
