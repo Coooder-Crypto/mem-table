@@ -91,6 +91,24 @@ export async function handleHttpRequest(runtime: MemTableRuntime, request: HttpR
       return { statusCode: 200, body: result };
     }
 
+    if (request.method === "POST" && url.pathname === "/v1/query") {
+      const body = request.body as { query?: unknown; template?: unknown };
+      const result =
+        typeof body.template === "string"
+          ? await runtime.queryTemplate(body.template)
+          : await runtime.query(body.query as Parameters<typeof runtime.query>[0]);
+      return { statusCode: 200, body: result };
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/ask") {
+      const body = request.body as { question?: unknown };
+      if (typeof body.question !== "string") {
+        return { statusCode: 400, body: { error: "question must be a string" } };
+      }
+      const result = await runtime.ask(body.question);
+      return { statusCode: 200, body: result };
+    }
+
     if (request.method === "GET" && url.pathname === "/v1/proposals") {
       const status = url.searchParams.get("status") ?? undefined;
       const proposals = await runtime.listProposals(status as Parameters<typeof runtime.listProposals>[0]);

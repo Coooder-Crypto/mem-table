@@ -19,6 +19,10 @@ try {
     await schema(args.slice(1));
   } else if (command === "query-template") {
     await queryTemplate(args.slice(1));
+  } else if (command === "query") {
+    await query(args.slice(1));
+  } else if (command === "ask") {
+    await ask(args.slice(1));
   } else if (command === "serve") {
     await serve(args.slice(1));
   } else if (command === "proposal") {
@@ -40,6 +44,8 @@ function printHelp(): void {
   pack list
   schema list
   query-template list
+  query <template_name>
+  ask <question>
   serve --http [--port 3838]
   proposal list [status]
   proposal commit <id>
@@ -144,6 +150,32 @@ async function queryTemplate(args: string[]): Promise<void> {
   try {
     const templates = await runtime.listQueryTemplates();
     printJson(templates);
+  } finally {
+    runtime.close();
+  }
+}
+
+async function query(args: string[]): Promise<void> {
+  const templateName = requiredArg(args[0], "query template name");
+  const runtime = await openRuntime();
+  try {
+    const result = await runtime.queryTemplate(templateName);
+    printJson(result);
+  } finally {
+    runtime.close();
+  }
+}
+
+async function ask(args: string[]): Promise<void> {
+  const question = args.join(" ").trim();
+  if (!question) {
+    throw new Error("Missing question");
+  }
+
+  const runtime = await openRuntime();
+  try {
+    const result = await runtime.ask(question);
+    printJson(result);
   } finally {
     runtime.close();
   }
