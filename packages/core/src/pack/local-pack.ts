@@ -1,6 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
-import type { PackManifest } from "./types.js";
+import type { ObserveExtractionRule, PackManifest } from "./types.js";
 
 export interface LocalPack {
   sourcePath: string;
@@ -45,10 +45,24 @@ export async function loadLocalPack(sourcePath: string): Promise<LocalPack> {
     }))
   );
 
+  const observeRules = (
+    await Promise.all(
+      (manifest.extractors ?? [])
+        .filter((extractorPath) => extractorPath.endsWith(".rules.json"))
+        .map(async (rulesPath) => parseObserveRules(await readJson(resolve(resolvedSourcePath, rulesPath)), rulesPath))
+    )
+  ).flat();
+
   return {
     sourcePath: resolvedSourcePath,
     manifestPath,
-    manifest,
+    manifest: {
+      ...manifest,
+      observe: {
+        ...(manifest.observe ?? {}),
+        ...(observeRules.length > 0 ? { rules: observeRules } : {})
+      }
+    },
     schemas,
     queries
   };
@@ -81,6 +95,30 @@ function parseManifest(value: Record<string, unknown>): PackManifest {
   }
 
   return value as unknown as PackManifest;
+}
+
+function parseObserveRules(value: Record<string, unknown>, path: string): ObserveExtractionRule[] {
+  const rules = value.rules;
+  if (!Array.isArray(rules)) {
+    throw new Error(`Observe rules file must include a rules array: ${path}`);
+  }
+
+  return rules.map((rule, index) => {
+    if (!isObject(rule)) {
+      throw new Error(`Observe rule at ${path}#${index} must be an object`);
+    }
+    if (typeof rule.schema !== "string" || rule.schema.length === 0) {
+      throw new Error(`Observe rule at ${path}#${index} must include a schema`);
+    }
+    if (typeof rule.pattern !== "string" || rule.pattern.length === 0) {
+      throw new Error(`Observe rule at ${path}#${index} must include a pattern`);
+    }
+    if (!isObject(rule.fields)) {
+      throw new Error(`Observe rule at ${path}#${index} must include fields`);
+    }
+
+    return rule as unknown as ObserveExtractionRule;
+  });
 }
 
 function assertStringArray(value: unknown, field: string): void {

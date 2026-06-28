@@ -6,6 +6,7 @@ export interface PackManifest {
   observe?: {
     eventTypes?: string[];
     keywords?: string[];
+    rules?: ObserveExtractionRule[];
   };
   writePolicy?: {
     default?: "proposal" | "auto";
@@ -17,6 +18,23 @@ export interface PackManifest {
   queries?: string[];
   validators?: string[];
   tools?: string;
+}
+
+export interface ObserveExtractionRule {
+  name?: string;
+  schema: string;
+  pattern: string;
+  flags?: string;
+  confidence?: number;
+  fields: Record<string, ObserveFieldMapping>;
+}
+
+export interface ObserveFieldMapping {
+  group?: number;
+  value?: unknown;
+  event?: "occurred_at";
+  type?: "string" | "number" | "integer";
+  map?: Record<string, unknown>;
 }
 
 export interface InstalledPack {
@@ -55,4 +73,3 @@ export interface PackInstallResult {
   schemas: RegisteredSchema[];
   query_templates: QueryTemplate[];
 }
-

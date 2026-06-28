@@ -16,7 +16,8 @@
     "schemas/body_weight.schema.json"
   ],
   "extractors": [
-    "extractors/prompts.md"
+    "extractors/prompts.md",
+    "extractors/observe.rules.json"
   ],
   "queries": [
     "queries/bench_progress.query.json",
@@ -27,4 +28,3 @@
   ],
   "tools": "tools/mcp.json"
 }
-

@@ -98,6 +98,7 @@ test("runtime installs the local fitness pack idempotently", async () => {
   const queryTemplates = await runtime.listQueryTemplates();
 
   assert.equal(packs.length, 1);
+  assert.equal(packs[0]?.manifest.observe.rules.length, 2);
   assert.deepEqual(
     schemas.map((schema) => schema.name).sort(),
     ["fitness.body_weight", "fitness.workout"]
