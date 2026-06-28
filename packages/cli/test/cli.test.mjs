@@ -10,4 +10,5 @@ test("cli exposes the memtable command list", async () => {
   assert.match(source, /agent enable openclaw/);
   assert.match(source, /agent doctor hermes/);
   assert.match(source, /agent doctor openclaw/);
+  assert.match(source, /proposal show <id>/);
 });

@@ -58,6 +58,7 @@ function printHelp(): void {
   agent doctor hermes [--endpoint http://127.0.0.1:3838]
   agent doctor openclaw [--endpoint http://127.0.0.1:3838]
   proposal list [status]
+  proposal show <id>
   proposal commit <id>
   proposal reject <id>
   record list [schema_name]`);
@@ -551,6 +552,9 @@ async function proposal(args: string[]): Promise<void> {
       const status = args[1] as Parameters<typeof runtime.listProposals>[0];
       const proposals = await runtime.listProposals(status);
       printJson(proposals);
+    } else if (subcommand === "show") {
+      const id = requiredArg(args[1], "proposal id");
+      printJson(await runtime.traceProposal(id));
     } else if (subcommand === "commit") {
       const id = requiredArg(args[1], "proposal id");
       const record = await runtime.commitProposal(id, { actor: "cli" });
