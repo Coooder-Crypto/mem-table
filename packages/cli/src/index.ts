@@ -2,7 +2,7 @@
 
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { MemTableRuntime, watchLogs, type AgentName } from "@memtable/core";
+import { followLogs, MemTableRuntime, watchLogs, type AgentName } from "@memtable/core";
 import { startHttpServer, startMcpStdioServer } from "@memtable/server";
 
 const args = process.argv.slice(2);
@@ -52,7 +52,7 @@ function printHelp(): void {
   query-template list
   query <template_name>
   ask <question>
-  watch <path> --agent <hermes|openclaw|custom>
+  watch <path> --agent <hermes|openclaw|custom> [--follow] [--interval-ms 1000]
   serve --http [--port 3838]
   serve --mcp
   doctor [--endpoint http://127.0.0.1:3838]
@@ -551,8 +551,33 @@ async function ask(args: string[]): Promise<void> {
 async function watch(args: string[]): Promise<void> {
   const path = requiredArg(args[0], "log path");
   const agent = agentNameValue(readFlag(args, "--agent") ?? "custom");
+  const follow = args.includes("--follow");
+  const pollIntervalMs = Number(readFlag(args, "--interval-ms") ?? "1000");
+  if (!Number.isInteger(pollIntervalMs) || pollIntervalMs <= 0) {
+    throw new Error(`Invalid --interval-ms value: ${String(readFlag(args, "--interval-ms"))}`);
+  }
+
   const runtime = await openRuntime();
   try {
+    if (follow) {
+      const controller = new AbortController();
+      process.once("SIGINT", () => {
+        controller.abort();
+      });
+      process.once("SIGTERM", () => {
+        controller.abort();
+      });
+      console.error(`MemTable watching ${path} for ${agent} logs every ${pollIntervalMs}ms`);
+      await followLogs(runtime, {
+        path,
+        agent,
+        pollIntervalMs,
+        signal: controller.signal,
+        onResult: printJson
+      });
+      return;
+    }
+
     printJson(
       await watchLogs(runtime, {
         path,

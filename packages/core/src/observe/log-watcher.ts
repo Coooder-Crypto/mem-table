@@ -9,6 +9,12 @@ export interface WatchLogsOptions {
   agent: AgentName;
 }
 
+export interface FollowLogsOptions extends WatchLogsOptions {
+  pollIntervalMs?: number;
+  signal?: AbortSignal;
+  onResult?: (result: WatchLogsResult) => void | Promise<void>;
+}
+
 export interface WatchLogsResult {
   files_scanned: number;
   lines_scanned: number;
@@ -19,6 +25,33 @@ export interface WatchLogsResult {
 }
 
 export async function watchLogs(runtime: MemTableRuntime, options: WatchLogsOptions): Promise<WatchLogsResult> {
+  return scanLogs(runtime, options);
+}
+
+export async function followLogs(runtime: MemTableRuntime, options: FollowLogsOptions): Promise<void> {
+  const pollIntervalMs = options.pollIntervalMs ?? 1000;
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+    throw new Error(`Invalid poll interval: ${String(options.pollIntervalMs)}`);
+  }
+
+  const fileStates = new Map<string, FollowFileState>();
+  while (!options.signal?.aborted) {
+    const result = await scanLogs(runtime, options, fileStates);
+    if (result.lines_scanned > 0) {
+      await options.onResult?.(result);
+    }
+    if (options.signal?.aborted) {
+      break;
+    }
+    await delay(pollIntervalMs, options.signal);
+  }
+}
+
+async function scanLogs(
+  runtime: MemTableRuntime,
+  options: WatchLogsOptions,
+  fileStates?: Map<string, FollowFileState>
+): Promise<WatchLogsResult> {
   const files = await logFiles(options.path);
   const results: ObserveResult[] = [];
   let linesScanned = 0;
@@ -26,9 +59,17 @@ export async function watchLogs(runtime: MemTableRuntime, options: WatchLogsOpti
   for (const file of files) {
     const fileStat = await stat(file);
     const content = await readFile(file, "utf8");
-    const lines = content.split(/\r?\n/);
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index]?.trim();
+    const fileState = fileStates?.get(file);
+    const scan = scanContent(content, {
+      previous: fileState,
+      holdIncompleteLine: Boolean(fileStates)
+    });
+    if (fileStates) {
+      fileStates.set(file, scan.nextState);
+    }
+
+    for (const entry of scan.lines) {
+      const line = entry.content.trim();
       if (!line) {
         continue;
       }
@@ -36,7 +77,7 @@ export async function watchLogs(runtime: MemTableRuntime, options: WatchLogsOpti
       const event = lineToEvent(line, {
         agent: options.agent,
         file,
-        lineNumber: index + 1,
+        lineNumber: entry.lineNumber,
         fallbackOccurredAt: fileStat.mtime.toISOString()
       });
       results.push(await runtime.observe(event));
@@ -51,6 +92,75 @@ export async function watchLogs(runtime: MemTableRuntime, options: WatchLogsOpti
     duplicates: results.filter((result) => result.duplicate).length,
     results
   };
+}
+
+interface FollowFileState {
+  offset: number;
+  lineNumber: number;
+  pending: string;
+}
+
+interface ScannedLine {
+  lineNumber: number;
+  content: string;
+}
+
+function scanContent(
+  content: string,
+  options: {
+    previous: FollowFileState | undefined;
+    holdIncompleteLine: boolean;
+  }
+): {
+  lines: ScannedLine[];
+  nextState: FollowFileState;
+} {
+  const previous = options.previous;
+  const reset = previous && previous.offset > content.length;
+  const offset = reset ? 0 : previous?.offset ?? 0;
+  const pending = reset ? "" : previous?.pending ?? "";
+  let lineNumber = reset ? 0 : previous?.lineNumber ?? 0;
+  const nextContent = `${pending}${content.slice(offset)}`;
+  const parts = nextContent.split(/\r?\n/);
+  const hasTrailingNewline = /\r?\n$/.test(nextContent);
+  const nextPending = options.holdIncompleteLine && !hasTrailingNewline ? parts.pop() ?? "" : "";
+  const completedParts = hasTrailingNewline ? parts.slice(0, -1) : parts;
+  const lines: ScannedLine[] = [];
+
+  for (const line of completedParts) {
+    lineNumber += 1;
+    lines.push({
+      lineNumber,
+      content: line
+    });
+  }
+
+  return {
+    lines,
+    nextState: {
+      offset: content.length,
+      lineNumber,
+      pending: nextPending
+    }
+  };
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timeout = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeout);
+        resolve();
+      },
+      { once: true }
+    );
+  });
 }
 
 async function logFiles(path: string): Promise<string[]> {

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { MemTableRuntime, watchLogs } from "../dist/index.js";
+import { followLogs, MemTableRuntime, watchLogs } from "../dist/index.js";
 
 test("runtime initializes sqlite and commits a proposal into a record", async () => {
   const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
@@ -298,3 +298,69 @@ test("log watcher observes jsonl files and deduplicates repeated scans", async (
 
   runtime.close();
 });
+
+test("log watcher can follow appended log lines", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const logPath = join(dir, "agent.jsonl");
+  await writeFile(logPath, "");
+
+  const controller = new AbortController();
+  const batches = [];
+  const safetyTimeout = setTimeout(() => {
+    controller.abort();
+  }, 1000);
+
+  try {
+    const followPromise = followLogs(runtime, {
+      path: dir,
+      agent: "custom",
+      pollIntervalMs: 10,
+      signal: controller.signal,
+      onResult: (result) => {
+        batches.push(result);
+        controller.abort();
+      }
+    });
+
+    await delay(30);
+    await appendFile(
+      logPath,
+      `${JSON.stringify({
+        id: "log_evt_follow_1",
+        event_type: "user_message",
+        role: "user",
+        content: "今天卧推 67.5kg 5x5",
+        occurred_at: "2026-06-28T10:00:00.000Z"
+      })}\n`
+    );
+
+    await followPromise;
+    assert.equal(batches.length, 1);
+    assert.equal(batches[0].files_scanned, 1);
+    assert.equal(batches[0].lines_scanned, 1);
+    assert.equal(batches[0].events_observed, 1);
+    assert.equal(batches[0].proposals_created, 1);
+
+    const proposals = await runtime.listProposals();
+    assert.equal(proposals.length, 1);
+    assert.equal(proposals[0]?.schema_name, "fitness.workout");
+  } finally {
+    clearTimeout(safetyTimeout);
+    runtime.close();
+  }
+});
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
