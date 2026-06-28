@@ -257,7 +257,6 @@ Core tools：
 memtable.observe
 memtable.ask
 memtable.query
-memtable.record.create
 memtable.proposal.list
 memtable.proposal.commit
 memtable.proposal.reject
@@ -416,10 +415,13 @@ OpenClaw 收到用户消息或工具结果后：
 ```bash
 memtable init
 memtable pack install ./packs/fitness
-memtable serve --http --mcp
+memtable serve --http
+memtable serve --mcp
 memtable agent enable hermes
 memtable agent enable openclaw
 ```
+
+当前 CLI 中 `serve --http` 与 `serve --mcp` 是两个独立运行模式，需要分别在不同进程启动。
 
 至少完成：
 
