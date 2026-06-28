@@ -8,7 +8,7 @@ import type {
   RecordEntry,
   RejectOptions
 } from "../ledger/types.js";
-import { extractFitnessProposals } from "../observe/fitness-extractor.js";
+import { extractRuleProposals } from "../observe/rule-extractor.js";
 import {
   loadLocalPack,
   queryNameFromJson,
@@ -78,14 +78,12 @@ export class MemTableRuntime {
     }
 
     const packs = this.store.listPacks();
-    const matchedPacks = packs.filter((pack) => packMatchesEvent(pack.manifest, event)).map((pack) => pack.name);
-    const proposalInputs = matchedPacks.flatMap((packName) =>
-      packName === "fitness" ? extractFitnessProposals(event) : []
-    );
+    const matchedPacks = packs.filter((pack) => packMatchesEvent(pack.manifest, event));
+    const proposalInputs = matchedPacks.flatMap((pack) => extractRuleProposals(event, pack));
     const proposals = proposalInputs.map((input) => this.store.createProposal(input));
     const result: ObserveResult = {
       status: matchedPacks.length > 0 ? "ok" : "ignored",
-      matched_packs: matchedPacks,
+      matched_packs: matchedPacks.map((pack) => pack.name),
       proposals_created: proposals.length,
       records_committed: 0,
       needs_review: proposals.filter((proposal) => proposal.status === "pending" || proposal.status === "needs_review").length

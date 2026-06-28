@@ -116,9 +116,41 @@ function parseObserveRules(value: Record<string, unknown>, path: string): Observ
     if (!isObject(rule.fields)) {
       throw new Error(`Observe rule at ${path}#${index} must include fields`);
     }
+    assertValidRegExp(rule.pattern, rule.flags, `${path}#${index}`);
+    assertObserveFields(rule.fields, `${path}#${index}`);
 
     return rule as unknown as ObserveExtractionRule;
   });
+}
+
+function assertValidRegExp(pattern: unknown, flags: unknown, location: string): void {
+  try {
+    new RegExp(String(pattern), typeof flags === "string" ? flags : undefined);
+  } catch (error) {
+    throw new Error(`Invalid observe rule regex at ${location}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function assertObserveFields(fields: Record<string, unknown>, location: string): void {
+  for (const [field, mapping] of Object.entries(fields)) {
+    if (!isObject(mapping)) {
+      throw new Error(`Observe rule field mapping at ${location}.${field} must be an object`);
+    }
+    if (mapping.group !== undefined && !Number.isInteger(mapping.group)) {
+      throw new Error(`Observe rule field mapping at ${location}.${field} group must be an integer`);
+    }
+    if (mapping.event !== undefined && mapping.event !== "occurred_at") {
+      throw new Error(`Observe rule field mapping at ${location}.${field} event must be occurred_at`);
+    }
+    if (
+      mapping.type !== undefined &&
+      mapping.type !== "string" &&
+      mapping.type !== "number" &&
+      mapping.type !== "integer"
+    ) {
+      throw new Error(`Observe rule field mapping at ${location}.${field} has unsupported type`);
+    }
+  }
 }
 
 function assertStringArray(value: unknown, field: string): void {
