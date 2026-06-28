@@ -61,7 +61,8 @@ function printHelp(): void {
   proposal show <id>
   proposal commit <id>
   proposal reject <id>
-  record list [schema_name]`);
+  record list [schema_name]
+  record show <id>`);
 }
 
 async function init(): Promise<void> {
@@ -573,14 +574,17 @@ async function proposal(args: string[]): Promise<void> {
 
 async function record(args: string[]): Promise<void> {
   const subcommand = args[0] ?? "list";
-  if (subcommand !== "list") {
-    throw new Error(`Unknown record command: ${subcommand}`);
-  }
-
   const runtime = await openRuntime();
   try {
-    const records = await runtime.listRecords(args[1]);
-    printJson(records);
+    if (subcommand === "list") {
+      const records = await runtime.listRecords(args[1]);
+      printJson(records);
+    } else if (subcommand === "show") {
+      const id = requiredArg(args[1], "record id");
+      printJson(await runtime.traceRecord(id));
+    } else {
+      throw new Error(`Unknown record command: ${subcommand}`);
+    }
   } finally {
     runtime.close();
   }
