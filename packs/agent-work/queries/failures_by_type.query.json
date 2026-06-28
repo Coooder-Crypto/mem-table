@@ -1,0 +1,22 @@
+{
+  "name": "agent_failures_by_type",
+  "description": "Count failed agent tasks by task type.",
+  "collection": "agent_work.task_event",
+  "filter": {
+    "status": {
+      "eq": "failed"
+    }
+  },
+  "aggregate": {
+    "failures": {
+      "op": "count"
+    }
+  },
+  "groupBy": {
+    "field": "task_type"
+  },
+  "orderBy": {
+    "field": "failures",
+    "direction": "desc"
+  }
+}

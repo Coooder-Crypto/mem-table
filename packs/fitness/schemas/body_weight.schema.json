@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fitness.body_weight",
+  "title": "Body Weight",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["weight_kg", "occurred_at"],
+  "properties": {
+    "weight_kg": {
+      "type": "number",
+      "minimum": 0
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
+

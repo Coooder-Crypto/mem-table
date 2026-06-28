@@ -1,0 +1,25 @@
+{
+  "name": "@memtable/cli",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Command-line interface for MemTable.",
+  "bin": {
+    "memtable": "./dist/index.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@memtable/core": "workspace:*",
+    "@memtable/server": "workspace:*"
+  },
+  "files": [
+    "dist"
+  ]
+}

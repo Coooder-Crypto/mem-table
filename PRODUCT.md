@@ -69,19 +69,22 @@ MemTable 真正要解决的是 Agent 与数据库之间的协议层和工作流�
 - 为 Agent 提供原生的查询接口
 - 让 Agent 知道什么时候应该查账本，而不是查文本记忆
 - 让开发者像安装软件包一样，为自己的 Agent 安装某个领域的结构化记账能力
+- 让 Hermes、OpenClaw 等现有 Agent 在不改核心源码的情况下获得结构化账本能力
 
 ### 4.1 产品形态
 
 MemTable 的第一产品形态应是：
 
-> Agent Ledger Runtime + Pack Manager
+> Local-first Agent Ledger Runtime + Pack Manager + Native Agent Enhancers
 
-它由四个部分组成：
+它由六个部分组成：
 
 - MemTable Core：本地结构化账本运行时，负责存储、校验、写入、查询和审计
 - MemTable SDK：面向 TypeScript、Python 等语言的开发者接入层
 - MemTable Packs：面向具体领域的结构化记忆能力包
 - MemTable MCP Server：将已安装的 Pack 暴露为 Agent 可调用的工具
+- MemTable HTTP Observer：接收 Agent 事件流，自动发现和提取可结构化数据
+- MemTable Agent Enhancers：面向 Hermes、OpenClaw 等现有 Agent 的轻量增强插件
 
 开发者的理想接入体验应接近包管理器：
 
@@ -94,6 +97,22 @@ memtable install agent-work
 
 安装 Pack 后，Agent 不只获得一些表结构，而是获得某个领域完整的记账能力，包括 Schema、提取规则、校验逻辑、查询模板、迁移脚本和工具定义。
 
+面向现有 Agent，MemTable 应提供一条更轻的增强路径：
+
+```bash
+memtable agent enable hermes
+memtable agent enable openclaw
+```
+
+这类命令不要求用户重写 Agent，而是完成：
+
+- 配置或启动 MemTable sidecar
+- 注册 MCP tools 或原生 tools
+- 安装 Agent 原生插件
+- 监听消息、工具调用和任务结束事件
+- 将事件转为 MemTable 标准 `AgentEvent`
+- 通过 Observer 自动生成 Proposal 或 Record
+
 ## 5. 非目标
 
 MemTable 初期不做以下事情：
@@ -105,6 +124,7 @@ MemTable 初期不做以下事情：
 - 不优先解决大规模分布式存储问题
 - 不把区块链作为账本实现
 - 不把 MemTable Pack 设计成普通代码包管理器，Pack 安装的是领域记账能力，而不是任意代码依赖
+- 不在 v0.1 为所有 Agent 都做原生插件，第一批只聚焦 Hermes 和 OpenClaw
 
 ## 6. 核心概念
 
@@ -308,6 +328,48 @@ memtable.fitness.query_training_volume
 
 Agent 不需要直接理解底层数据库表结构，而是通过受控工具完成记录和查询。
 
+### 6.10 Agent Enhancer
+
+Agent Enhancer 是面向现有 Agent 的轻量增强插件。
+
+它不替代 Agent runtime，也不改变 Agent 的核心执行逻辑，而是在旁边完成两件事：
+
+- 通过 MCP 或原生工具，让 Agent 可以主动调用 MemTable
+- 通过插件 hooks 或日志监听，让 MemTable 自动观察 Agent 事件
+
+第一批官方 Enhancer：
+
+- Hermes Enhancer
+- OpenClaw Enhancer
+
+### 6.11 Observer
+
+Observer 是 MemTable 的自动观察入口。
+
+它接收标准化 Agent 事件：
+
+```json
+{
+  "agent": "hermes",
+  "event_type": "user_message",
+  "session_id": "s_123",
+  "message_id": "m_123",
+  "role": "user",
+  "content": "今天卧推 65kg 5x5，体重 90.4kg",
+  "occurred_at": "2026-06-24T10:00:00+08:00"
+}
+```
+
+然后执行：
+
+```text
+observe event
+  -> match installed packs
+  -> extract structured data
+  -> validate
+  -> create proposal or commit record
+```
+
 ## 7. 核心能力
 
 ### 7.1 结构化信息发现
@@ -462,6 +524,39 @@ MemTable MCP Server 应根据已安装 Pack 动态暴露工具。
 
 这使得 Agent 接入 MemTable 时，不需要直接写 SQL，也不需要在 prompt 中硬编码每个领域的数据结构。
 
+### 7.9 Agent 自动观察
+
+MemTable 应支持每轮交互自动观察。
+
+典型来源包括：
+
+- 用户消息
+- Assistant 回复
+- 工具调用输入
+- 工具调用结果
+- Agent 任务结束事件
+- 子 Agent 结束事件
+
+自动观察不等于自动写入。
+
+默认策略：
+
+- 高置信度、低风险数据可以自动提交
+- 中等置信度数据进入 Proposal
+- 敏感 Pack 默认需要确认
+- 无关内容直接忽略
+
+### 7.10 Native Agent Enhancer
+
+MemTable 应为主流 Agent 提供原生增强插件。
+
+第一批目标：
+
+- Hermes：通过 Python 插件、hooks、tools、skill 和 MCP 配置增强
+- OpenClaw：通过 TypeScript 插件、manifest、`api.registerTool` 和 lifecycle hooks 增强
+
+这解决了只用 MCP 时无法稳定自动观察每轮交互的问题。
+
 ## 8. MVP 范围
 
 第一版应避免抽象过度，建议聚焦一个清晰场景。
@@ -496,12 +591,20 @@ MemTable MCP Server 应根据已安装 Pack 动态暴露工具。
 
 从产品形态看，第一版 demo 应以 Pack 形式交付。例如 `fitness` demo 不只是写在示例代码里，而是一个真实可安装的 `memtable-pack-fitness`。
 
+从 Agent 接入看，第一版必须证明 MemTable 能轻量增强现有 Agent：
+
+- Hermes 中输入自然语言日志后，MemTable 自动生成 Proposal
+- OpenClaw 工具调用结束后，MemTable 自动观察结果并生成 Proposal
+- Hermes / OpenClaw 都能通过 MemTable 工具查询结构化账本
+
 ## 9. MVP 功能清单
 
 ### 9.1 必须支持
 
 - 定义 Schema
 - 安装本地 Pack
+- HTTP Observer API
+- 标准 AgentEvent
 - 从文本中提取结构化 Proposal
 - 校验 Proposal
 - 提交 Record
@@ -509,6 +612,9 @@ MemTable MCP Server 应根据已安装 Pack 动态暴露工具。
 - 聚合和趋势分析
 - 查看来源
 - 生成基础 MCP tool manifest
+- 基础 MCP Server
+- Hermes Enhancer 原型
+- OpenClaw Enhancer 原型
 - 导出数据
 
 ### 9.2 可以暂缓
@@ -522,6 +628,8 @@ MemTable MCP Server 应根据已安装 Pack 动态暴露工具。
 - 多模态输入
 - 远程 Pack Registry
 - Pack 评分、签名和信任系统
+- 完整 Dashboard
+- 对所有 Agent 的官方插件适配
 
 ## 10. 推荐技术架构
 
@@ -530,7 +638,7 @@ MemTable MCP Server 应根据已安装 Pack 动态暴露工具。
 ```text
 Application / Agent Framework
           |
-  MemTable SDK / MCP Server / CLI
+  MemTable SDK / MCP Server / HTTP Observer / CLI
           |
   Pack Manager / Extractor / Validator / Query API
           |
@@ -597,9 +705,24 @@ Pack Manager 需要处理：
 
 MCP Server 是 MemTable 面向 Agent 的主要运行入口之一。
 
+#### HTTP Observer
+
+接收来自 Agent Enhancer、日志监听器或自定义集成的标准事件。
+
+HTTP Observer 是自动观察模式的主要入口。
+
+#### Agent Enhancer
+
+为现有 Agent 提供轻量接入。
+
+第一批官方 Enhancer：
+
+- Hermes Enhancer
+- OpenClaw Enhancer
+
 #### CLI
 
-提供初始化、安装 Pack、导入数据、查询、调试和导出能力。
+提供初始化、安装 Pack、启用 Agent Enhancer、导入数据、查询、调试和导出能力。
 
 ## 11. API 草案
 
@@ -681,6 +804,8 @@ memtable init
 memtable search fitness
 memtable install fitness
 memtable install ./packs/fitness
+memtable agent enable hermes
+memtable agent enable openclaw
 memtable ingest ./logs/fitness.md --pack fitness
 memtable query "最近三个月卧推进步了吗？"
 memtable inspect proposals
@@ -832,7 +957,7 @@ Structured Ledger 适合：
 
 ### 14.1 第一阶段
 
-发布一个最小可用 SDK、Pack Manager 和 demo。
+发布一个最小可用 Runtime、Pack Manager、Observer、MCP Server、Hermes Enhancer、OpenClaw Enhancer 和 demo。
 
 重点不是覆盖所有场景，而是证明：
 
@@ -841,6 +966,7 @@ Structured Ledger 适合：
 - 查询结果明显优于纯文本 Memory
 - 用户能理解 Ledger 与 Memory 的差异
 - 开发者可以通过安装 Pack 快速给 Agent 增加一个领域的结构化记忆能力
+- 现有 Agent 可以在不改核心源码的情况下自动沉淀结构化账本
 
 ### 14.2 第二阶段
 
@@ -861,6 +987,8 @@ Structured Ledger 适合：
 
 候选集成：
 
+- Hermes
+- OpenClaw
 - LangChain
 - LlamaIndex
 - Mastra
@@ -906,12 +1034,18 @@ MemTable 的开源生态核心应围绕 Pack 展开。
 - 被其他 Agent 项目集成的数量
 - 社区 Pack 数量
 - Pack 下载和安装次数
+- Hermes / OpenClaw Enhancer 安装次数
+- AgentEvent observe 成功次数
 
 ### 15.3 体验指标
 
 核心体验应回答一个问题：
 
 > 用户是否能问出纯 Memory 很难稳定回答，但 Ledger 能稳定回答的问题？
+
+另一个关键体验问题：
+
+> 用户是否能用一条命令增强现有 Agent，并在自然交互中自动沉淀结构化数据？
 
 ## 16. 主要风险
 
@@ -972,28 +1106,57 @@ MemTable 的开源生态核心应围绕 Pack 展开。
 - 引入 Pack 签名、评分和兼容性声明
 - 官方提供 Pack 设计规范
 
+### 16.6 Agent 插件接口变化
+
+Hermes 和 OpenClaw 的 hooks、manifest 或插件 API 可能随版本变化。
+
+应对方式：
+
+- Adapter 层隔离 Agent 版本差异
+- 保存原始 event metadata
+- 建立 Agent adapter fixture tests
+- 提供 `memtable agent doctor <agent>` 做兼容性诊断
+
+### 16.7 自动观察过度写入
+
+自动观察可能把无关聊天内容误识别为结构化数据。
+
+应对方式：
+
+- 默认 proposal-first
+- Pack observe rules
+- 置信度阈值
+- 去重机制
+- 用户可禁用单个 Pack 的 observe 能力
+
 ## 17. 路线图
 
 ### v0.1
 
 - SQLite 存储
-- TypeScript SDK
+- TypeScript Runtime
+- CLI
 - 本地 Pack 安装
-- 手动定义 Schema
+- 标准 AgentEvent
+- HTTP Observer API
 - 文本到 Proposal
 - Proposal 校验和提交
 - 基础查询 DSL
+- 基础 MCP Server
+- Hermes Enhancer 原型
+- OpenClaw Enhancer 原型
 - Fitness Ledger demo
 
 ### v0.2
 
-- Python SDK
 - DuckDB 支持
 - 来源追溯
 - 审计日志
 - 趋势查询
-- CLI
-- 基础 MCP Server
+- Python SDK
+- Hermes Skill 增强
+- OpenClaw 插件增强
+- Log Watcher
 - Agent Work Ledger demo
 
 ### v0.3
@@ -1004,12 +1167,15 @@ MemTable 的开源生态核心应围绕 Pack 展开。
 - 导入导出
 - GitHub Pack 安装
 - Pack 版本管理
+- `memtable agent doctor`
+- LangChain / LlamaIndex adapter
 
 ### v0.4
 
 - 多领域官方 Pack
 - 远程 Pack Registry
-- LangChain / LlamaIndex 集成
+- Pack 签名和信任策略
+- 更多 Agent Enhancer
 - Dashboard 原型
 
 ## 18. 文档与传播表达
@@ -1023,6 +1189,7 @@ MemTable 的开源生态核心应围绕 Pack 展开。
 - Structured memory for long-running agents
 - The missing data layer for agents
 - Install structured memory for your agents
+- Add a structured ledger to your existing agents
 
 ### 18.2 README 首屏表达
 
@@ -1034,6 +1201,9 @@ verifiable, queryable, and auditable records.
 
 Install domain packs like fitness, finance, project, or agent-work to give
 your agent structured memory for a specific area.
+
+Enhance existing agents like Hermes and OpenClaw with one command, then let
+MemTable observe conversations and tool results in the background.
 
 Memory helps agents remember what happened.
 MemTable helps agents compute what changed.
@@ -1056,6 +1226,8 @@ MemTable 的核心价值不是让 Agent 记住更多文本，而是让 Agent 知
 当信息被写入结构化账本后，Agent 不再需要每次从上下文中重新提取和计算，而可以直接基于可信数据进行分析、比较和决策。
 
 Pack Manager 让这种能力可以被复用和分发。开发者不需要每次从零设计 Schema、提取规则和查询模板，而是可以像安装软件包一样，为自己的 Agent 安装某个领域的结构化记忆能力。
+
+Agent Enhancer 让 MemTable 可以轻量接入现有 Agent。MCP 解决主动调用问题，原生插件 hooks 解决自动观察问题，HTTP Observer 则把不同 Agent 的事件统一成结构化写入流程。
 
 长期来看，Agent 的记忆系统可能会分成两类：
 

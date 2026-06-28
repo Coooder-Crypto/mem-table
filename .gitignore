@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.turbo/
+.DS_Store
+__pycache__/
+*.pyc
+.memtable/
+*.db
+*.db-shm
+*.db-wal

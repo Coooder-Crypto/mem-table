@@ -1,0 +1,20 @@
+{
+  "name": "@memtable/openclaw-plugin",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "OpenClaw enhancer plugin for MemTable.",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json"
+  ]
+}
+

@@ -1,0 +1,28 @@
+{
+  "name": "agent-work",
+  "version": "0.1.0",
+  "memtable": ">=0.1.0",
+  "description": "Structured ledger for agent task outcomes and operational events.",
+  "observe": {
+    "eventTypes": ["user_message", "tool_result", "agent_end"],
+    "keywords": ["任务", "失败", "完成", "成功", "task", "failed", "completed", "succeeded"]
+  },
+  "writePolicy": {
+    "default": "proposal",
+    "autoCommitConfidence": 0.9
+  },
+  "schemas": [
+    "schemas/task_event.schema.json"
+  ],
+  "extractors": [
+    "extractors/prompts.md",
+    "extractors/observe.rules.json"
+  ],
+  "queries": [
+    "queries/failures_by_type.query.json"
+  ],
+  "validators": [
+    "validators/rules.json"
+  ],
+  "tools": "tools/mcp.json"
+}

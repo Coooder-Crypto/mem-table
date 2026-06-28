@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "field": "duration_minutes",
+      "op": "between",
+      "value": [0, 10080]
+    },
+    {
+      "field": "occurred_at",
+      "op": "not_future"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "tools": [
+    {
+      "name": "memtable.fitness.record_workout",
+      "description": "Record a structured workout entry.",
+      "input_schema": "fitness.workout",
+      "action": "record",
+      "bound_schema": "fitness.workout",
+      "confirmation_policy": "proposal"
+    },
+    {
+      "name": "memtable.fitness.query_bench_progress",
+      "description": "Query bench press progress over time.",
+      "action": "query",
+      "query_template": "bench_progress",
+      "confirmation_policy": "auto"
+    }
+  ]
+}
+
