@@ -95,7 +95,7 @@ node packages/cli/dist/index.js doctor
 
 ## Agent Enhancers
 
-MemTable supports two integration surfaces:
+MemTable supports three integration surfaces:
 
 - Tool surface: agents call MemTable through MCP or registered tools.
 - Observer surface: native plugin hooks send agent events to `memtable serve --http`.
@@ -115,7 +115,7 @@ node packages/cli/dist/index.js agent enable openclaw
 node packages/cli/dist/index.js agent doctor openclaw
 ```
 
-The enable commands write local config under `.memtable/agents/` and print the native plugin install command for the target agent.
+The enable commands write local config under `.memtable/agents/` and print the native plugin install command for the target agent. The Hermes and OpenClaw enhancers are alpha adapters for the current MVP surface: tool registration, event mapping, and sidecar observation.
 
 ## MCP Server
 
@@ -125,7 +125,7 @@ Start the MCP stdio server:
 node packages/cli/dist/index.js serve --mcp
 ```
 
-Current MCP tools expose observing, asking, proposals, records, packs, schemas, and query templates.
+Current MCP tools expose observing, asking, structured query, proposals, packs, and schemas.
 
 ## Core Workflow
 
@@ -171,6 +171,27 @@ node packages/cli/dist/index.js agent doctor openclaw
 ```
 
 These commands return JSON checks with fix commands for missing config, missing SQLite DB, missing packs, offline sidecar, or incomplete agent enhancer config.
+
+## Pack Observe Rules
+
+Packs can include `extractors/*.rules.json` files. These rules describe regex-based extraction from observed agent events into structured proposals.
+
+The current rule format supports:
+
+- `schema`: target ledger schema
+- `pattern` and `flags`: extraction regex
+- `fields`: mapping capture groups, constants, or event fields into record fields
+- `confidence`: proposal confidence
+- `optional`: optional field mapping
+
+This is intentionally conservative for v0.1. More expressive extractors can be added without changing the ledger runtime contract.
+
+## Alpha Notes
+
+- `memtable watch` is a one-shot scanner, not a continuous tailer. Re-running it is safe because log events get stable ids and duplicate observations are ignored.
+- `memtable serve --http` and `memtable serve --mcp` are separate modes in the current CLI. Run them in separate processes when both surfaces are needed.
+- Node may print an experimental warning for `node:sqlite`; that is expected for this alpha runtime.
+- Hermes and OpenClaw enhancers are minimal native adapters. They validate the integration pattern but are not yet version-pinned against every upstream agent release.
 
 ## Project Docs
 

@@ -499,10 +499,11 @@ MCP Server 是工具面入口。
 memtable serve --mcp
 ```
 
-或同时启动：
+当前 CLI 一次只启动一种 serve mode。如果同时需要 HTTP Observer 和 MCP 工具面，应在两个进程中分别启动：
 
 ```bash
-memtable serve --http --mcp
+memtable serve --http
+memtable serve --mcp
 ```
 
 ### 10.2 Core tools
@@ -511,7 +512,6 @@ memtable serve --http --mcp
 memtable.observe
 memtable.ask
 memtable.query
-memtable.record.create
 memtable.proposal.list
 memtable.proposal.commit
 memtable.proposal.reject
@@ -1058,7 +1058,8 @@ question
 npm install -g memtable
 memtable init
 memtable pack install fitness
-memtable serve --http --mcp
+memtable serve --http
+memtable serve --mcp
 ```
 
 ### 18.2 Hermes 增强
@@ -1154,7 +1155,8 @@ OpenClaw：
 ```text
 memtable init
 memtable pack install ./packs/fitness
-memtable serve --http --mcp
+memtable serve --http
+memtable serve --mcp
 simulate hermes user_message
 simulate openclaw after_tool_call
 proposal list
