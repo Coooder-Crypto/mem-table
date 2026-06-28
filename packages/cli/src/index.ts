@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MemTableRuntime } from "@memtable/core";
 import { startHttpServer, startMcpStdioServer } from "@memtable/server";
@@ -25,6 +25,8 @@ try {
     await ask(args.slice(1));
   } else if (command === "serve") {
     await serve(args.slice(1));
+  } else if (command === "doctor") {
+    await doctor(args.slice(1));
   } else if (command === "agent") {
     await agent(args.slice(1));
   } else if (command === "proposal") {
@@ -50,6 +52,7 @@ function printHelp(): void {
   ask <question>
   serve --http [--port 3838]
   serve --mcp
+  doctor [--endpoint http://127.0.0.1:3838]
   agent enable hermes [--endpoint http://127.0.0.1:3838]
   agent enable openclaw [--endpoint http://127.0.0.1:3838]
   proposal list [status]
@@ -121,6 +124,133 @@ async function serve(args: string[]): Promise<void> {
   process.once("SIGTERM", () => {
     void shutdown();
   });
+}
+
+type DoctorStatus = "ok" | "warn" | "error";
+
+interface DoctorCheck {
+  name: string;
+  status: DoctorStatus;
+  message: string;
+  fix?: string;
+}
+
+interface DoctorReport {
+  status: DoctorStatus;
+  checks: DoctorCheck[];
+}
+
+async function doctor(args: string[]): Promise<void> {
+  const endpoint = readFlag(args, "--endpoint") ?? "http://127.0.0.1:3838";
+  const checks: DoctorCheck[] = [];
+
+  checks.push(await fileCheck("config", ".memtable/config.json", "Run `memtable init`."));
+  checks.push(await fileCheck("sqlite_database", ".memtable/memtable.db", "Run `memtable init`."));
+
+  if (await fileExists(".memtable/memtable.db")) {
+    const runtime = await openRuntime();
+    try {
+      const packs = await runtime.listPacks();
+      checks.push({
+        name: "runtime",
+        status: "ok",
+        message: "SQLite runtime opened successfully."
+      });
+      checks.push(
+        packs.some((pack) => pack.name === "fitness")
+          ? {
+              name: "fitness_pack",
+              status: "ok",
+              message: "fitness pack is installed."
+            }
+          : {
+              name: "fitness_pack",
+              status: "warn",
+              message: "fitness pack is not installed.",
+              fix: "Run `memtable pack install packs/fitness`."
+            }
+      );
+    } catch (error) {
+      checks.push({
+        name: "runtime",
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+        fix: "Check `.memtable/memtable.db` or rerun `memtable init`."
+      });
+    } finally {
+      runtime.close();
+    }
+  } else {
+    checks.push({
+      name: "runtime",
+      status: "error",
+      message: "SQLite runtime cannot be opened because `.memtable/memtable.db` is missing.",
+      fix: "Run `memtable init`."
+    });
+    checks.push({
+      name: "fitness_pack",
+      status: "warn",
+      message: "fitness pack cannot be checked before MemTable is initialized.",
+      fix: "Run `memtable init` then `memtable pack install packs/fitness`."
+    });
+  }
+
+  checks.push(await httpHealthCheck(endpoint));
+  printJson({
+    status: reportStatus(checks),
+    checks
+  } satisfies DoctorReport);
+}
+
+async function fileCheck(name: string, path: string, fix: string): Promise<DoctorCheck> {
+  if (await fileExists(path)) {
+    return {
+      name,
+      status: "ok",
+      message: `${path} exists.`
+    };
+  }
+
+  return {
+    name,
+    status: "error",
+    message: `${path} is missing.`,
+    fix
+  };
+}
+
+async function httpHealthCheck(endpoint: string): Promise<DoctorCheck> {
+  try {
+    const response = await fetchWithTimeout(`${endpoint.replace(/\/$/, "")}/health`, 2000);
+    if (!response.ok) {
+      return {
+        name: "http_sidecar",
+        status: "error",
+        message: `HTTP sidecar returned ${response.status}.`,
+        fix: "Run `memtable serve --http`."
+      };
+    }
+    const body = (await response.json()) as { status?: unknown };
+    return body.status === "ok"
+      ? {
+          name: "http_sidecar",
+          status: "ok",
+          message: `HTTP sidecar is reachable at ${endpoint}.`
+        }
+      : {
+          name: "http_sidecar",
+          status: "warn",
+          message: `HTTP sidecar responded, but health payload was unexpected.`,
+          fix: "Restart with `memtable serve --http`."
+        };
+  } catch {
+    return {
+      name: "http_sidecar",
+      status: "warn",
+      message: `HTTP sidecar is not reachable at ${endpoint}.`,
+      fix: "Run `memtable serve --http`."
+    };
+  }
 }
 
 async function agent(args: string[]): Promise<void> {
@@ -329,6 +459,35 @@ function requiredArg(value: string | undefined, name: string): string {
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function reportStatus(checks: DoctorCheck[]): DoctorStatus {
+  if (checks.some((check) => check.status === "error")) {
+    return "error";
+  }
+  if (checks.some((check) => check.status === "warn")) {
+    return "warn";
+  }
+  return "ok";
 }
 
 function readFlag(args: string[], flag: string): string | undefined {
