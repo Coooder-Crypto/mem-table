@@ -2,7 +2,7 @@
 
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { MemTableRuntime } from "@memtable/core";
+import { MemTableRuntime, watchLogs, type AgentName } from "@memtable/core";
 import { startHttpServer, startMcpStdioServer } from "@memtable/server";
 
 const args = process.argv.slice(2);
@@ -23,6 +23,8 @@ try {
     await query(args.slice(1));
   } else if (command === "ask") {
     await ask(args.slice(1));
+  } else if (command === "watch") {
+    await watch(args.slice(1));
   } else if (command === "serve") {
     await serve(args.slice(1));
   } else if (command === "doctor") {
@@ -50,6 +52,7 @@ function printHelp(): void {
   query-template list
   query <template_name>
   ask <question>
+  watch <path> --agent <hermes|openclaw|custom>
   serve --http [--port 3838]
   serve --mcp
   doctor [--endpoint http://127.0.0.1:3838]
@@ -545,6 +548,22 @@ async function ask(args: string[]): Promise<void> {
   }
 }
 
+async function watch(args: string[]): Promise<void> {
+  const path = requiredArg(args[0], "log path");
+  const agent = agentNameValue(readFlag(args, "--agent") ?? "custom");
+  const runtime = await openRuntime();
+  try {
+    printJson(
+      await watchLogs(runtime, {
+        path,
+        agent
+      })
+    );
+  } finally {
+    runtime.close();
+  }
+}
+
 async function proposal(args: string[]): Promise<void> {
   const subcommand = args[0] ?? "list";
   const runtime = await openRuntime();
@@ -644,6 +663,13 @@ function supportedAgentName(value: string): "hermes" | "openclaw" {
     return value;
   }
   throw new Error(`Unsupported agent enhancer: ${value}`);
+}
+
+function agentNameValue(value: string): AgentName {
+  if (value === "hermes" || value === "openclaw" || value === "custom") {
+    return value;
+  }
+  throw new Error(`Unsupported agent: ${value}`);
 }
 
 function stringValue(value: unknown): string | undefined {
