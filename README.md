@@ -198,6 +198,7 @@ This is intentionally conservative for v0.1. More expressive extractors can be a
 - [Product Document](./PRODUCT.md)
 - [Technical Design](./TECHNICAL_DESIGN.md)
 - [Implementation Plan](./IMPLEMENTATION_PLAN.md)
+- [Pack Format](./docs/pack-format.md)
 - [Hermes Example](./examples/hermes/README.md)
 - [OpenClaw Example](./examples/openclaw/README.md)
 
