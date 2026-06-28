@@ -160,7 +160,7 @@ test("http trace endpoints expose proposal and record sources", async () => {
   }
 });
 
-test("mcp tools expose observe and ask", async () => {
+test("mcp tools expose observe, ask, and trace tools", async () => {
   const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
   const runtime = await MemTableRuntime.open({
     storage: {
@@ -177,6 +177,8 @@ test("mcp tools expose observe and ask", async () => {
       method: "tools/list"
     });
     assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.observe"));
+    assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.proposal.show"));
+    assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.record.show"));
 
     const observeResponse = await handleMcpRequest(runtime, {
       jsonrpc: "2.0",
@@ -217,9 +219,40 @@ test("mcp tools expose observe and ask", async () => {
       await runtime.commitProposal(proposal.id, { actor: "test" });
     }
 
+    const [proposal] = await runtime.listProposals();
+    const records = await runtime.listRecords("fitness.workout");
+
+    const proposalShowResponse = await handleMcpRequest(runtime, {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: {
+        name: "memtable.proposal.show",
+        arguments: {
+          id: proposal.id
+        }
+      }
+    });
+    assert.equal(proposalShowResponse?.error, undefined);
+    assert.match(proposalShowResponse?.result.content[0].text, /evt_mcp_1/);
+
+    const recordShowResponse = await handleMcpRequest(runtime, {
+      jsonrpc: "2.0",
+      id: 6,
+      method: "tools/call",
+      params: {
+        name: "memtable.record.show",
+        arguments: {
+          id: records[0].id
+        }
+      }
+    });
+    assert.equal(recordShowResponse?.error, undefined);
+    assert.match(recordShowResponse?.result.content[0].text, /fitness.workout/);
+
     const askResponse = await handleMcpRequest(runtime, {
       jsonrpc: "2.0",
-      id: 4,
+      id: 7,
       method: "tools/call",
       params: {
         name: "memtable.ask",
