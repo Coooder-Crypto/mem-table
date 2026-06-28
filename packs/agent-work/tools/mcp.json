@@ -1,0 +1,9 @@
+{
+  "tools": [
+    {
+      "name": "agent_failures_by_type",
+      "description": "Count failed agent tasks by task type.",
+      "query": "agent_failures_by_type"
+    }
+  ]
+}

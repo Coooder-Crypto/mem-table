@@ -35,6 +35,7 @@ export interface ObserveFieldMapping {
   event?: "occurred_at";
   type?: "string" | "number" | "integer";
   map?: Record<string, unknown>;
+  optional?: boolean;
 }
 
 export interface InstalledPack {

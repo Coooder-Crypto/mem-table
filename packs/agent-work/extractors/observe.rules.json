@@ -1,0 +1,65 @@
+{
+  "rules": [
+    {
+      "name": "task_failed_with_type",
+      "schema": "agent_work.task_event",
+      "pattern": "(?:任务|task)\\s*([^，,]+?)\\s*(失败|failed)[，,]\\s*(?:类型|type)\\s*([^，,]+)(?:[，,]\\s*(?:耗时|duration)\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(?:分钟|min|minutes))?",
+      "flags": "i",
+      "confidence": 0.9,
+      "fields": {
+        "task_name": {
+          "group": 1,
+          "type": "string"
+        },
+        "status": {
+          "group": 2,
+          "map": {
+            "失败": "failed",
+            "failed": "failed"
+          }
+        },
+        "task_type": {
+          "group": 3,
+          "type": "string"
+        },
+        "duration_minutes": {
+          "group": 4,
+          "type": "number",
+          "optional": true
+        },
+        "occurred_at": {
+          "event": "occurred_at"
+        }
+      }
+    },
+    {
+      "name": "task_completed_with_type",
+      "schema": "agent_work.task_event",
+      "pattern": "(?:任务|task)\\s*([^，,]+?)\\s*(完成|成功|completed|succeeded)[，,]\\s*(?:类型|type)\\s*([^，,]+)",
+      "flags": "i",
+      "confidence": 0.9,
+      "fields": {
+        "task_name": {
+          "group": 1,
+          "type": "string"
+        },
+        "status": {
+          "group": 2,
+          "map": {
+            "完成": "completed",
+            "成功": "completed",
+            "completed": "completed",
+            "succeeded": "completed"
+          }
+        },
+        "task_type": {
+          "group": 3,
+          "type": "string"
+        },
+        "occurred_at": {
+          "event": "occurred_at"
+        }
+      }
+    }
+  ]
+}

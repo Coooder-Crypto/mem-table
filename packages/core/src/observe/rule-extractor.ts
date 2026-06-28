@@ -46,6 +46,9 @@ function extractFields(
   for (const [field, mapping] of Object.entries(fields)) {
     const value = extractFieldValue(event, match, mapping);
     if (value === undefined) {
+      if (mapping.optional) {
+        continue;
+      }
       return undefined;
     }
     data[field] = value;
@@ -65,8 +68,8 @@ function extractFieldValue(event: AgentEvent, match: RegExpMatchArray, mapping: 
     value = mapping.value;
   }
 
-  if (mapping.map && typeof value === "string" && value in mapping.map) {
-    value = mapping.map[value];
+  if (mapping.map && typeof value === "string") {
+    value = mapping.map[value] ?? mapping.map[value.toLowerCase()] ?? value;
   }
 
   if (value === undefined) {
@@ -84,7 +87,7 @@ function extractFieldValue(event: AgentEvent, match: RegExpMatchArray, mapping: 
   }
 
   if (mapping.type === "string") {
-    return String(value);
+    return String(value).trim();
   }
 
   return value;

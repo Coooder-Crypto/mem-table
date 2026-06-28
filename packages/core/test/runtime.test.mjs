@@ -204,3 +204,52 @@ test("runtime answers bench progress from committed records", async () => {
 
   runtime.close();
 });
+
+test("runtime observes agent work events from pack rules", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/agent-work", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const result = await runtime.observe({
+    id: "evt_agent_work_1",
+    agent: "custom",
+    event_type: "agent_end",
+    role: "assistant",
+    content: "任务 deploy-api 失败，类型 deploy，耗时 12 分钟",
+    occurred_at: "2026-06-27T11:00:00.000Z"
+  });
+
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.matched_packs, ["agent-work"]);
+  assert.equal(result.proposals_created, 1);
+
+  const proposals = await runtime.listProposals();
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0]?.schema_name, "agent_work.task_event");
+  assert.deepEqual(proposals[0]?.data, {
+    task_name: "deploy-api",
+    status: "failed",
+    task_type: "deploy",
+    duration_minutes: 12,
+    occurred_at: "2026-06-27T11:00:00.000Z"
+  });
+
+  await runtime.commitProposal(proposals[0].id, { actor: "test" });
+  const queryResult = await runtime.queryTemplate("agent_failures_by_type");
+  assert.equal(queryResult.records_used, 1);
+  assert.deepEqual(queryResult.rows, [
+    {
+      group: "deploy",
+      records_used: 1,
+      failures: 1
+    }
+  ]);
+
+  runtime.close();
+});

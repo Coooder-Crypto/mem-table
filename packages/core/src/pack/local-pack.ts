@@ -150,6 +150,9 @@ function assertObserveFields(fields: Record<string, unknown>, location: string):
     ) {
       throw new Error(`Observe rule field mapping at ${location}.${field} has unsupported type`);
     }
+    if (mapping.optional !== undefined && typeof mapping.optional !== "boolean") {
+      throw new Error(`Observe rule field mapping at ${location}.${field} optional must be a boolean`);
+    }
   }
 }
 
