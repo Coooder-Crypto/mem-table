@@ -23,6 +23,7 @@ Those questions need records, timestamps, schemas, aggregation, and source traci
 - `@memtable/server`: HTTP observer and MCP stdio server
 - `@memtable/cli`: local CLI for init, packs, proposals, queries, and diagnostics
 - `packs/fitness`: first domain pack for workouts and body weight
+- `packs/agent-work`: agent task outcome pack for failures, completions, and task categories
 - `@memtable/agent-hermes`: Hermes enhancer plugin assets
 - `@memtable/openclaw-plugin`: OpenClaw enhancer plugin
 
@@ -65,6 +66,12 @@ Install the fitness pack:
 
 ```bash
 node packages/cli/dist/index.js pack install packs/fitness
+```
+
+Install the agent work pack:
+
+```bash
+node packages/cli/dist/index.js pack install packs/agent-work
 ```
 
 Start the HTTP observer sidecar:
@@ -136,6 +143,14 @@ can become two proposals:
 - `fitness.body_weight`
 
 After commit, MemTable can answer trend questions from records instead of chat history.
+
+The `agent-work` pack can also turn task logs such as:
+
+```text
+任务 deploy-api 失败，类型 deploy，耗时 12 分钟
+```
+
+into `agent_work.task_event` proposals and query failure counts by task type.
 
 ## Diagnostics
 
