@@ -74,7 +74,7 @@ async function scanLogs(
         continue;
       }
       linesScanned += 1;
-      const event = lineToEvent(line, {
+      const event = mapLogLine(line, {
         agent: options.agent,
         file,
         lineNumber: entry.lineNumber,
@@ -190,7 +190,7 @@ function isLogFile(path: string): boolean {
   return extension === ".jsonl" || extension === ".log";
 }
 
-function lineToEvent(
+function mapLogLine(
   line: string,
   context: {
     agent: AgentName;
@@ -200,30 +200,183 @@ function lineToEvent(
   }
 ): AgentEvent {
   const parsed = parseLine(line);
-  const occurredAt = stringValue(parsed.occurred_at ?? parsed.timestamp ?? parsed.time) ?? context.fallbackOccurredAt;
-  const eventType = eventTypeValue(parsed.event_type ?? parsed.type) ?? "user_message";
-  const content = stringValue(parsed.content ?? parsed.message ?? parsed.text ?? parsed.output) ?? line;
+  if (context.agent === "hermes") {
+    return mapHermesLine(parsed, line, context) ?? mapGenericLine(parsed, line, context);
+  }
+  if (context.agent === "openclaw") {
+    return mapOpenClawLine(parsed, line, context) ?? mapGenericLine(parsed, line, context);
+  }
+  return mapGenericLine(parsed, line, context);
+}
+
+function mapGenericLine(
+  parsed: Record<string, unknown>,
+  line: string,
+  context: {
+    agent: AgentName;
+    file: string;
+    lineNumber: number;
+    fallbackOccurredAt: string;
+  }
+): AgentEvent {
+  const payload = linePayload(parsed);
+  const occurredAt = occurredAtValue(payload, context.fallbackOccurredAt);
+  const eventType = eventTypeValue(payload.event_type ?? payload.type) ?? "user_message";
+  const content = stringValue(payload.content ?? payload.message ?? payload.text ?? payload.output) ?? line;
 
   const event: AgentEvent = {
-    id: stringValue(parsed.id) ?? stableLogEventId(context.file, context.lineNumber, line),
+    id: eventIdValue(payload) ?? stableLogEventId(context.file, context.lineNumber, line),
     agent: context.agent,
     event_type: eventType,
-    role: roleValue(parsed.role) ?? (eventType === "tool_result" ? "tool" : "user"),
+    role: roleValue(payload.role) ?? (eventType === "tool_result" ? "tool" : "user"),
     content,
     occurred_at: occurredAt,
-    metadata: {
-      source: "log_watcher",
-      file: context.file,
-      line: context.lineNumber,
-      raw: line
-    }
+    metadata: logMetadata(line, context)
   };
-  assignOptional(event, "session_id", stringValue(parsed.session_id ?? parsed.sessionId));
-  assignOptional(event, "conversation_id", stringValue(parsed.conversation_id ?? parsed.conversationId));
-  assignOptional(event, "message_id", stringValue(parsed.message_id ?? parsed.messageId));
-  assignOptional(event, "tool_name", stringValue(parsed.tool_name ?? parsed.toolName));
-  assignOptional(event, "tool_input", parsed.tool_input ?? parsed.input);
-  assignOptional(event, "tool_output", parsed.tool_output ?? parsed.output);
+  assignCommonFields(event, payload);
+  assignOptional(event, "tool_name", stringValue(payload.tool_name ?? payload.toolName));
+  assignOptional(event, "tool_input", payload.tool_input ?? payload.input);
+  assignOptional(event, "tool_output", payload.tool_output ?? payload.output);
+  return event;
+}
+
+function mapHermesLine(
+  parsed: Record<string, unknown>,
+  line: string,
+  context: {
+    agent: AgentName;
+    file: string;
+    lineNumber: number;
+    fallbackOccurredAt: string;
+  }
+): AgentEvent | undefined {
+  const eventName = logEventName(parsed);
+  if (!eventName) {
+    return undefined;
+  }
+
+  const payload = linePayload(parsed);
+  const occurredAt = occurredAtValue(payload, context.fallbackOccurredAt);
+  if (eventName === "pre_gateway_dispatch") {
+    const event = baseAgentEvent("hermes", "user_message", "user", occurredAt, line, context, eventName);
+    assignOptional(event, "content", stringValue(payload.content ?? payload.message ?? payload.text ?? payload.prompt));
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "post_llm_call") {
+    const event = baseAgentEvent("hermes", "assistant_message", "assistant", occurredAt, line, context, eventName);
+    assignOptional(event, "content", stringValue(payload.content ?? payload.message ?? payload.output ?? payload.response));
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "post_tool_call") {
+    const event = baseAgentEvent("hermes", "tool_result", "tool", occurredAt, line, context, eventName);
+    assignOptional(event, "tool_name", stringValue(payload.tool_name ?? payload.toolName ?? payload.name));
+    assignOptional(event, "tool_input", payload.params ?? payload.input ?? payload.arguments);
+    assignOptional(event, "tool_output", payload.result ?? payload.output);
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "on_session_start") {
+    const event = baseAgentEvent("hermes", "session_start", undefined, occurredAt, line, context, eventName);
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "on_session_end") {
+    const event = baseAgentEvent("hermes", "session_end", undefined, occurredAt, line, context, eventName);
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  return undefined;
+}
+
+function mapOpenClawLine(
+  parsed: Record<string, unknown>,
+  line: string,
+  context: {
+    agent: AgentName;
+    file: string;
+    lineNumber: number;
+    fallbackOccurredAt: string;
+  }
+): AgentEvent | undefined {
+  const eventName = logEventName(parsed);
+  if (!eventName) {
+    return undefined;
+  }
+
+  const payload = linePayload(parsed);
+  const occurredAt = occurredAtValue(payload, context.fallbackOccurredAt);
+  if (eventName === "message_received") {
+    const event = baseAgentEvent("openclaw", "user_message", "user", occurredAt, line, context, eventName);
+    assignOptional(event, "content", stringValue(payload.content ?? payload.message ?? payload.text));
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "message_sent" || eventName === "llm_output") {
+    const event = baseAgentEvent("openclaw", "assistant_message", "assistant", occurredAt, line, context, eventName);
+    assignOptional(event, "content", stringValue(payload.content ?? payload.message ?? payload.output));
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "after_tool_call" || eventName === "tool_result_persist") {
+    const event = baseAgentEvent("openclaw", "tool_result", "tool", occurredAt, line, context, eventName);
+    assignOptional(event, "tool_name", stringValue(payload.toolName ?? payload.tool_name ?? payload.name));
+    assignOptional(event, "tool_input", payload.params ?? payload.input);
+    assignOptional(event, "tool_output", payload.result ?? payload.output);
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "agent_end") {
+    const event = baseAgentEvent("openclaw", "agent_end", undefined, occurredAt, line, context, eventName);
+    assignOptional(event, "content", stringValue(payload.output ?? payload.content ?? payload.message));
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "session_start") {
+    const event = baseAgentEvent("openclaw", "session_start", undefined, occurredAt, line, context, eventName);
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  if (eventName === "session_end") {
+    const event = baseAgentEvent("openclaw", "session_end", undefined, occurredAt, line, context, eventName);
+    assignCommonFields(event, payload);
+    return event;
+  }
+
+  return undefined;
+}
+
+function baseAgentEvent(
+  agent: "hermes" | "openclaw",
+  eventType: AgentEventType,
+  role: AgentEvent["role"] | undefined,
+  occurredAt: string,
+  line: string,
+  context: {
+    file: string;
+    lineNumber: number;
+  },
+  eventName: string
+): AgentEvent {
+  const event: AgentEvent = {
+    id: stableLogEventId(context.file, context.lineNumber, line),
+    agent,
+    event_type: eventType,
+    occurred_at: occurredAt,
+    metadata: logMetadata(line, context, eventName)
+  };
+  assignOptional(event, "role", role);
   return event;
 }
 
@@ -234,6 +387,47 @@ function parseLine(line: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function logEventName(parsed: Record<string, unknown>): string | undefined {
+  return stringValue(parsed.event_name ?? parsed.eventName ?? parsed.hook ?? parsed.hook_name ?? parsed.lifecycle_event);
+}
+
+function linePayload(parsed: Record<string, unknown>): Record<string, unknown> {
+  const embedded = objectValue(parsed.payload ?? parsed.data ?? parsed.event);
+  return embedded ? { ...parsed, ...embedded } : parsed;
+}
+
+function occurredAtValue(payload: Record<string, unknown>, fallback: string): string {
+  return stringValue(payload.occurred_at ?? payload.timestamp ?? payload.time) ?? fallback;
+}
+
+function eventIdValue(payload: Record<string, unknown>): string | undefined {
+  return stringValue(payload.id ?? payload.event_id ?? payload.eventId);
+}
+
+function assignCommonFields(event: AgentEvent, payload: Record<string, unknown>): void {
+  assignOptional(event, "session_id", stringValue(payload.session_id ?? payload.sessionId));
+  assignOptional(event, "conversation_id", stringValue(payload.conversation_id ?? payload.conversationId));
+  assignOptional(event, "message_id", stringValue(payload.message_id ?? payload.messageId));
+}
+
+function logMetadata(
+  line: string,
+  context: {
+    file: string;
+    lineNumber: number;
+  },
+  eventName?: string
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    source: "log_watcher",
+    file: context.file,
+    line: context.lineNumber,
+    raw: line
+  };
+  assignOptional(metadata, "event_name", eventName);
+  return metadata;
 }
 
 function stableLogEventId(file: string, lineNumber: number, line: string): string {
@@ -265,6 +459,10 @@ function roleValue(value: unknown): AgentEvent["role"] | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return isObject(value) ? value : undefined;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -359,6 +359,98 @@ test("log watcher can follow appended log lines", async () => {
   }
 });
 
+test("log watcher maps Hermes lifecycle log lines", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const logPath = join(dir, "hermes.jsonl");
+  await writeFile(
+    logPath,
+    `${JSON.stringify({
+      event_name: "pre_gateway_dispatch",
+      payload: {
+        sessionId: "s-hermes",
+        messageId: "m-hermes",
+        prompt: "今天卧推 72.5kg 5x5",
+        occurred_at: "2026-06-28T12:00:00.000Z"
+      }
+    })}\n`
+  );
+
+  const result = await watchLogs(runtime, {
+    path: dir,
+    agent: "hermes"
+  });
+
+  assert.equal(result.events_observed, 1);
+  assert.equal(result.proposals_created, 1);
+
+  const [proposal] = await runtime.listProposals();
+  assert.equal(proposal?.schema_name, "fitness.workout");
+  const trace = await runtime.traceProposal(proposal.id);
+  assert.equal(trace.source?.agent, "hermes");
+  assert.equal(trace.source?.event_type, "user_message");
+  assert.equal(trace.source?.session_id, "s-hermes");
+  assert.equal(trace.source?.message_id, "m-hermes");
+  assert.equal(trace.source?.excerpt, "今天卧推 72.5kg 5x5");
+
+  runtime.close();
+});
+
+test("log watcher maps OpenClaw tool result log lines", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const logPath = join(dir, "openclaw.jsonl");
+  await writeFile(
+    logPath,
+    `${JSON.stringify({
+      eventName: "after_tool_call",
+      payload: {
+        sessionId: "s-openclaw",
+        messageId: "m-openclaw",
+        toolName: "workout_logger",
+        result: "今天体重 89.8kg",
+        occurred_at: "2026-06-28T13:00:00.000Z"
+      }
+    })}\n`
+  );
+
+  const result = await watchLogs(runtime, {
+    path: dir,
+    agent: "openclaw"
+  });
+
+  assert.equal(result.events_observed, 1);
+  assert.equal(result.proposals_created, 1);
+
+  const [proposal] = await runtime.listProposals();
+  assert.equal(proposal?.schema_name, "fitness.body_weight");
+  const trace = await runtime.traceProposal(proposal.id);
+  assert.equal(trace.source?.agent, "openclaw");
+  assert.equal(trace.source?.event_type, "tool_result");
+  assert.equal(trace.source?.session_id, "s-openclaw");
+  assert.equal(trace.source?.message_id, "m-openclaw");
+  assert.equal(trace.source?.excerpt, "今天体重 89.8kg");
+  assert.equal(trace.source?.metadata?.event_name, "after_tool_call");
+
+  runtime.close();
+});
+
 function delay(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
