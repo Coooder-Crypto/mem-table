@@ -78,6 +78,18 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "memtable.proposal.show",
+    description: "Show a proposal with its source and audit log.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id"],
+      properties: {
+        id: { type: "string" }
+      }
+    }
+  },
+  {
     name: "memtable.proposal.commit",
     description: "Commit a proposal into a record.",
     inputSchema: {
@@ -92,6 +104,18 @@ const TOOL_DEFINITIONS = [
   {
     name: "memtable.proposal.reject",
     description: "Reject a proposal.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id"],
+      properties: {
+        id: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "memtable.record.show",
+    description: "Show a committed record with its source and audit log.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -216,10 +240,14 @@ async function callTool(runtime: MemTableRuntime, name: string, input: unknown):
       return runtime.listProposals(
         typeof args.status === "string" ? (args.status as Parameters<typeof runtime.listProposals>[0]) : undefined
       );
+    case "memtable.proposal.show":
+      return runtime.traceProposal(requiredString(args, "id"));
     case "memtable.proposal.commit":
       return runtime.commitProposal(requiredString(args, "id"), { actor: "mcp" });
     case "memtable.proposal.reject":
       return runtime.rejectProposal(requiredString(args, "id"), { actor: "mcp" });
+    case "memtable.record.show":
+      return runtime.traceRecord(requiredString(args, "id"));
     case "memtable.pack.list":
       return runtime.listPacks();
     case "memtable.schema.list":

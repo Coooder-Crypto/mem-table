@@ -108,7 +108,59 @@ test("http ask answers bench progress after committed proposals", async () => {
   }
 });
 
-test("mcp tools expose observe and ask", async () => {
+test("http trace endpoints expose proposal and record sources", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  await runtime.installPack(fileURLToPath(new URL("../../../packs/fitness", import.meta.url)));
+
+  try {
+    await handleHttpRequest(runtime, {
+      method: "POST",
+      url: "/v1/observe",
+      body: {
+        id: "evt_server_trace_1",
+        agent: "custom",
+        event_type: "user_message",
+        role: "user",
+        content: "今天卧推 65kg 5x5",
+        occurred_at: "2026-06-27T10:00:00.000Z"
+      }
+    });
+
+    const [proposal] = await runtime.listProposals();
+    const proposalTraceResponse = await handleHttpRequest(runtime, {
+      method: "GET",
+      url: `/v1/proposals/${proposal.id}`
+    });
+    assert.equal(proposalTraceResponse.statusCode, 200);
+    assert.equal(proposalTraceResponse.body.proposal.id, proposal.id);
+    assert.equal(proposalTraceResponse.body.source.excerpt, "今天卧推 65kg 5x5");
+
+    const record = await runtime.commitProposal(proposal.id, { actor: "test" });
+    const recordTraceResponse = await handleHttpRequest(runtime, {
+      method: "GET",
+      url: `/v1/records/${record.id}`
+    });
+    assert.equal(recordTraceResponse.statusCode, 200);
+    assert.equal(recordTraceResponse.body.record.id, record.id);
+    assert.equal(recordTraceResponse.body.source.excerpt, "今天卧推 65kg 5x5");
+
+    const missingResponse = await handleHttpRequest(runtime, {
+      method: "GET",
+      url: "/v1/proposals/missing"
+    });
+    assert.equal(missingResponse.statusCode, 404);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("mcp tools expose observe, ask, and trace tools", async () => {
   const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
   const runtime = await MemTableRuntime.open({
     storage: {
@@ -125,6 +177,8 @@ test("mcp tools expose observe and ask", async () => {
       method: "tools/list"
     });
     assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.observe"));
+    assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.proposal.show"));
+    assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.record.show"));
 
     const observeResponse = await handleMcpRequest(runtime, {
       jsonrpc: "2.0",
@@ -165,9 +219,40 @@ test("mcp tools expose observe and ask", async () => {
       await runtime.commitProposal(proposal.id, { actor: "test" });
     }
 
+    const [proposal] = await runtime.listProposals();
+    const records = await runtime.listRecords("fitness.workout");
+
+    const proposalShowResponse = await handleMcpRequest(runtime, {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: {
+        name: "memtable.proposal.show",
+        arguments: {
+          id: proposal.id
+        }
+      }
+    });
+    assert.equal(proposalShowResponse?.error, undefined);
+    assert.match(proposalShowResponse?.result.content[0].text, /evt_mcp_1/);
+
+    const recordShowResponse = await handleMcpRequest(runtime, {
+      jsonrpc: "2.0",
+      id: 6,
+      method: "tools/call",
+      params: {
+        name: "memtable.record.show",
+        arguments: {
+          id: records[0].id
+        }
+      }
+    });
+    assert.equal(recordShowResponse?.error, undefined);
+    assert.match(recordShowResponse?.result.content[0].text, /fitness.workout/);
+
     const askResponse = await handleMcpRequest(runtime, {
       jsonrpc: "2.0",
-      id: 4,
+      id: 7,
       method: "tools/call",
       params: {
         name: "memtable.ask",

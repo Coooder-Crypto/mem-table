@@ -116,6 +116,12 @@ export async function handleHttpRequest(runtime: MemTableRuntime, request: HttpR
       return { statusCode: 200, body: proposals };
     }
 
+    const proposalTraceMatch = url.pathname.match(/^\/v1\/proposals\/([^/]+)$/);
+    if (request.method === "GET" && proposalTraceMatch?.[1]) {
+      const trace = await runtime.traceProposal(decodeURIComponent(proposalTraceMatch[1]));
+      return { statusCode: 200, body: trace };
+    }
+
     const commitMatch = url.pathname.match(/^\/v1\/proposals\/([^/]+)\/commit$/);
     if (request.method === "POST" && commitMatch?.[1]) {
       const record = await runtime.commitProposal(decodeURIComponent(commitMatch[1]), { actor: "http" });
@@ -128,12 +134,19 @@ export async function handleHttpRequest(runtime: MemTableRuntime, request: HttpR
       return { statusCode: 200, body: proposal };
     }
 
+    const recordTraceMatch = url.pathname.match(/^\/v1\/records\/([^/]+)$/);
+    if (request.method === "GET" && recordTraceMatch?.[1]) {
+      const trace = await runtime.traceRecord(decodeURIComponent(recordTraceMatch[1]));
+      return { statusCode: 200, body: trace };
+    }
+
     return { statusCode: 404, body: { error: "not_found" } };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
-      statusCode: 500,
+      statusCode: message.includes("not found") || message.includes("Not found") ? 404 : 500,
       body: {
-        error: error instanceof Error ? error.message : String(error)
+        error: message
       }
     };
   }

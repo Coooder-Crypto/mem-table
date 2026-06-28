@@ -125,7 +125,7 @@ Start the MCP stdio server:
 node packages/cli/dist/index.js serve --mcp
 ```
 
-Current MCP tools expose observing, asking, structured query, proposals, packs, and schemas.
+Current MCP tools expose observing, asking, structured query, proposals, proposal tracing, record tracing, packs, and schemas.
 
 ## Core Workflow
 
@@ -172,6 +172,29 @@ node packages/cli/dist/index.js agent doctor openclaw
 
 These commands return JSON checks with fix commands for missing config, missing SQLite DB, missing packs, offline sidecar, or incomplete agent enhancer config.
 
+## Tracing
+
+Use CLI tracing when you need to inspect why a value exists in the ledger:
+
+```bash
+node packages/cli/dist/index.js proposal show <id>
+node packages/cli/dist/index.js record show <id>
+```
+
+The HTTP sidecar also exposes trace endpoints:
+
+```http
+GET /v1/proposals/:id
+GET /v1/records/:id
+```
+
+MCP exposes the same trace surface through:
+
+```text
+memtable.proposal.show
+memtable.record.show
+```
+
 ## Pack Observe Rules
 
 Packs can include `extractors/*.rules.json` files. These rules describe regex-based extraction from observed agent events into structured proposals.
@@ -198,6 +221,7 @@ This is intentionally conservative for v0.1. More expressive extractors can be a
 - [Product Document](./PRODUCT.md)
 - [Technical Design](./TECHNICAL_DESIGN.md)
 - [Implementation Plan](./IMPLEMENTATION_PLAN.md)
+- [Pack Format](./docs/pack-format.md)
 - [Hermes Example](./examples/hermes/README.md)
 - [OpenClaw Example](./examples/openclaw/README.md)
 
