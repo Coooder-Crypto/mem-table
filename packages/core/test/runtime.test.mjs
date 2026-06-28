@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { MemTableRuntime } from "../dist/index.js";
+import { MemTableRuntime, watchLogs } from "../dist/index.js";
 
 test("runtime initializes sqlite and commits a proposal into a record", async () => {
   const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
@@ -250,6 +250,51 @@ test("runtime observes agent work events from pack rules", async () => {
       failures: 1
     }
   ]);
+
+  runtime.close();
+});
+
+test("log watcher observes jsonl files and deduplicates repeated scans", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const logPath = join(dir, "agent.jsonl");
+  await writeFile(
+    logPath,
+    `${JSON.stringify({
+      id: "log_evt_1",
+      event_type: "user_message",
+      role: "user",
+      content: "今天卧推 65kg 5x5，体重 90.4kg",
+      occurred_at: "2026-06-27T10:00:00.000Z"
+    })}\n`
+  );
+
+  const first = await watchLogs(runtime, {
+    path: dir,
+    agent: "custom"
+  });
+  const second = await watchLogs(runtime, {
+    path: dir,
+    agent: "custom"
+  });
+
+  assert.equal(first.files_scanned, 1);
+  assert.equal(first.lines_scanned, 1);
+  assert.equal(first.events_observed, 1);
+  assert.equal(first.proposals_created, 2);
+  assert.equal(second.duplicates, 1);
+  assert.equal(second.proposals_created, 2);
+
+  const proposals = await runtime.listProposals();
+  assert.equal(proposals.length, 2);
 
   runtime.close();
 });
