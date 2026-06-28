@@ -80,6 +80,13 @@ Start the HTTP observer sidecar:
 node packages/cli/dist/index.js serve --http
 ```
 
+Scan existing agent logs without installing a native enhancer:
+
+```bash
+node packages/cli/dist/index.js watch ~/.hermes/logs --agent hermes
+node packages/cli/dist/index.js watch ~/.openclaw/runs --agent openclaw
+```
+
 In another terminal, inspect health and setup:
 
 ```bash
@@ -92,6 +99,7 @@ MemTable supports two integration surfaces:
 
 - Tool surface: agents call MemTable through MCP or registered tools.
 - Observer surface: native plugin hooks send agent events to `memtable serve --http`.
+- Log surface: MemTable scans existing `.jsonl` or `.log` files and observes each line.
 
 Enable Hermes:
 
