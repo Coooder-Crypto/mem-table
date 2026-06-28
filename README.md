@@ -121,7 +121,7 @@ node packages/cli/dist/index.js agent enable openclaw
 node packages/cli/dist/index.js agent doctor openclaw
 ```
 
-The enable commands write local config under `.memtable/agents/` and print the native plugin install command for the target agent. The Hermes and OpenClaw enhancers are alpha adapters for the current MVP surface: tool registration, event mapping, and sidecar observation.
+The enable commands write local config under `.memtable/agents/` and print the native plugin install command for the target agent. The doctor commands also return a lightweight `watch.command` fallback, so users can start log-based ingestion with `memtable watch ... --follow` before installing a native enhancer. The Hermes and OpenClaw enhancers are alpha adapters for the current MVP surface: tool registration, event mapping, and sidecar observation.
 
 ## MCP Server
 

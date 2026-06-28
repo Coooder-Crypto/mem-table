@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { followLogs, MemTableRuntime, watchLogs, type AgentName } from "@memtable/core";
 import { startHttpServer, startMcpStdioServer } from "@memtable/server";
@@ -145,6 +146,26 @@ interface DoctorCheck {
 interface DoctorReport {
   status: DoctorStatus;
   checks: DoctorCheck[];
+}
+
+interface AgentDoctorReport extends DoctorReport {
+  agent: "hermes" | "openclaw";
+  watch: AgentWatchSuggestion;
+}
+
+interface AgentWatchSuggestion {
+  mode: "log_watch";
+  agent: "hermes" | "openclaw";
+  path: string;
+  command: string;
+  interval_ms: number;
+  candidates: AgentWatchCandidate[];
+  note: string;
+}
+
+interface AgentWatchCandidate {
+  path: string;
+  exists: boolean;
 }
 
 async function doctor(args: string[]): Promise<void> {
@@ -394,11 +415,63 @@ async function agentDoctor(args: string[]): Promise<void> {
 
   const endpoint = readFlag(args, "--endpoint") ?? stringValue(config?.endpoint) ?? "http://127.0.0.1:3838";
   checks.push(await httpHealthCheck(endpoint));
+  const watchSuggestion = await agentWatchSuggestion(agentName);
+  checks.push(watchPathCheck(watchSuggestion));
   printJson({
     status: reportStatus(checks),
     agent: agentName,
+    watch: watchSuggestion,
     checks
-  });
+  } satisfies AgentDoctorReport);
+}
+
+async function agentWatchSuggestion(agentName: "hermes" | "openclaw"): Promise<AgentWatchSuggestion> {
+  const candidates = await Promise.all(
+    agentLogCandidatePaths(agentName).map(async (path) => ({
+      path,
+      exists: await fileExists(expandHome(path))
+    }))
+  );
+  const selected = candidates.find((candidate) => candidate.exists) ?? candidates[0];
+  const path = selected?.path ?? (agentName === "hermes" ? "~/.hermes/logs" : "~/.openclaw/runs");
+  const command = `memtable watch ${path} --agent ${agentName} --follow`;
+  return {
+    mode: "log_watch",
+    agent: agentName,
+    path,
+    command,
+    interval_ms: 1000,
+    candidates,
+    note: selected?.exists
+      ? "Use this command for lightweight log-based ingestion without installing the native enhancer."
+      : "No known log path was found. Use the command after confirming the agent log directory, or replace the path with your actual log directory."
+  };
+}
+
+function watchPathCheck(suggestion: AgentWatchSuggestion): DoctorCheck {
+  const found = suggestion.candidates.find((candidate) => candidate.exists);
+  if (found) {
+    return {
+      name: "log_watch_path",
+      status: "ok",
+      message: `Detected log path ${found.path}.`,
+      fix: suggestion.command
+    };
+  }
+
+  return {
+    name: "log_watch_path",
+    status: "warn",
+    message: "No known log path was detected for lightweight watch mode.",
+    fix: suggestion.command
+  };
+}
+
+function agentLogCandidatePaths(agentName: "hermes" | "openclaw"): string[] {
+  if (agentName === "hermes") {
+    return ["~/.hermes/logs", "~/.local/share/hermes/logs"];
+  }
+  return ["~/.openclaw/runs", "~/.openclaw/logs"];
 }
 
 async function readAgentConfig(
@@ -661,6 +734,16 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function expandHome(path: string): string {
+  if (path === "~") {
+    return homedir();
+  }
+  if (path.startsWith("~/")) {
+    return `${homedir()}${path.slice(1)}`;
+  }
+  return path;
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
