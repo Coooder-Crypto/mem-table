@@ -420,6 +420,11 @@ export class SqliteStore {
     return source;
   }
 
+  getSource(id: string): Source | undefined {
+    const row = this.db.prepare("SELECT * FROM mt_sources WHERE id = ?").get(id) as Row | undefined;
+    return row ? sourceFromRow(row) : undefined;
+  }
+
   createProposal(input: ProposalInput): Proposal {
     return this.transaction(() => {
       const sourceId = input.source ? this.createSource(input.source).id : input.source_id;
@@ -565,12 +570,20 @@ export class SqliteStore {
     return rows.map(recordFromRow);
   }
 
+  getRecord(id: string): RecordEntry | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM mt_records WHERE id = ? AND deleted_at IS NULL")
+      .get(id) as Row | undefined;
+    return row ? recordFromRow(row) : undefined;
+  }
+
   getAuditLog(entityId?: string): Row[] {
-    return entityId
+    const rows = entityId
       ? (this.db
           .prepare("SELECT * FROM mt_audit_log WHERE entity_id = ? ORDER BY created_at ASC")
           .all(entityId) as Row[])
       : (this.db.prepare("SELECT * FROM mt_audit_log ORDER BY created_at ASC").all() as Row[]);
+    return rows.map(auditLogFromRow);
   }
 
   private insertAuditLog(
@@ -626,6 +639,23 @@ function proposalFromRow(row: Row): Proposal {
   assignOptional(proposal, "confidence", nullableNumber(row.confidence));
   assignOptional(proposal, "validation_errors", nullableJsonArray(row.validation_errors_json));
   return proposal;
+}
+
+function sourceFromRow(row: Row): Source {
+  const source: Source = {
+    id: String(row.id),
+    kind: String(row.kind),
+    created_at: String(row.created_at)
+  };
+  assignOptional(source, "reference", nullableString(row.reference));
+  assignOptional(source, "excerpt", nullableString(row.excerpt));
+  assignOptional(source, "agent", nullableString(row.agent));
+  assignOptional(source, "event_type", nullableString(row.event_type));
+  assignOptional(source, "session_id", nullableString(row.session_id));
+  assignOptional(source, "conversation_id", nullableString(row.conversation_id));
+  assignOptional(source, "message_id", nullableString(row.message_id));
+  assignOptional(source, "metadata", nullableJsonObject(row.metadata_json));
+  return source;
 }
 
 function recordFromRow(row: Row): RecordEntry {
@@ -684,6 +714,26 @@ function queryTemplateFromRow(row: Row): QueryTemplate {
   return template;
 }
 
+function auditLogFromRow(row: Row): Row {
+  return {
+    id: String(row.id),
+    entity_type: String(row.entity_type),
+    entity_id: String(row.entity_id),
+    action: String(row.action),
+    before: nullableJson(row.before_json),
+    after: nullableJson(row.after_json),
+    actor: nullableString(row.actor),
+    created_at: String(row.created_at)
+  };
+}
+
+function nullableJson(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  return JSON.parse(String(value)) as unknown;
+}
+
 function assignOptional<T extends object, K extends keyof T>(target: T, key: K, value: T[K] | undefined): void {
   if (value !== undefined) {
     target[key] = value;
@@ -708,6 +758,16 @@ function nullableJsonArray(value: unknown): unknown[] | undefined {
   }
   const parsed = JSON.parse(String(value));
   return Array.isArray(parsed) ? parsed : undefined;
+}
+
+function nullableJsonObject(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const parsed = JSON.parse(String(value)) as unknown;
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : undefined;
 }
 
 function getString(data: Record<string, unknown>, key: string): string | undefined {

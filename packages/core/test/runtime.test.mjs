@@ -40,6 +40,16 @@ test("runtime initializes sqlite and commits a proposal into a record", async ()
   assert.equal(record.schema_name, "fitness.workout");
   assert.equal(record.occurred_at, "2026-06-24T10:00:00.000Z");
 
+  const proposalTrace = await runtime.traceProposal(proposal.id);
+  assert.equal(proposalTrace.proposal.id, proposal.id);
+  assert.equal(proposalTrace.source?.excerpt, "今天卧推 65kg 5x5");
+  assert.equal(proposalTrace.audit_log.some((entry) => entry.action === "commit"), true);
+
+  const recordTrace = await runtime.traceRecord(record.id);
+  assert.equal(recordTrace.record.id, record.id);
+  assert.equal(recordTrace.source?.excerpt, "今天卧推 65kg 5x5");
+  assert.equal(recordTrace.audit_log.some((entry) => entry.action === "create"), true);
+
   const proposals = await runtime.listProposals();
   assert.equal(proposals[0]?.status, "committed");
 

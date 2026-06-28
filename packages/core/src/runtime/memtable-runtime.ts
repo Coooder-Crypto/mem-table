@@ -6,7 +6,8 @@ import type {
   ProposalInput,
   ProposalStatus,
   RecordEntry,
-  RejectOptions
+  RejectOptions,
+  Source
 } from "../ledger/types.js";
 import { extractRuleProposals } from "../observe/rule-extractor.js";
 import {
@@ -25,6 +26,18 @@ export interface MemTableRuntimeOptions {
     driver: "sqlite";
     path: string;
   };
+}
+
+export interface ProposalTrace {
+  proposal: Proposal;
+  source?: Source;
+  audit_log: Record<string, unknown>[];
+}
+
+export interface RecordTrace {
+  record: RecordEntry;
+  source?: Source;
+  audit_log: Record<string, unknown>[];
 }
 
 export class MemTableRuntime {
@@ -174,6 +187,26 @@ export class MemTableRuntime {
     return this.store.listProposals(status);
   }
 
+  async getProposal(id: string): Promise<Proposal | undefined> {
+    return this.store.getProposal(id);
+  }
+
+  async traceProposal(id: string): Promise<ProposalTrace> {
+    const proposal = this.store.getProposal(id);
+    if (!proposal) {
+      throw new Error(`Proposal not found: ${id}`);
+    }
+    const trace: ProposalTrace = {
+      proposal,
+      audit_log: this.store.getAuditLog(proposal.id)
+    };
+    const source = proposal.source_id ? this.store.getSource(proposal.source_id) : undefined;
+    if (source) {
+      trace.source = source;
+    }
+    return trace;
+  }
+
   async commitProposal(id: string, options: CommitOptions = {}): Promise<RecordEntry> {
     return this.store.commitProposal(id, options);
   }
@@ -184,6 +217,26 @@ export class MemTableRuntime {
 
   async listRecords(schemaName?: string): Promise<RecordEntry[]> {
     return this.store.listRecords(schemaName);
+  }
+
+  async getRecord(id: string): Promise<RecordEntry | undefined> {
+    return this.store.getRecord(id);
+  }
+
+  async traceRecord(id: string): Promise<RecordTrace> {
+    const record = this.store.getRecord(id);
+    if (!record) {
+      throw new Error(`Record not found: ${id}`);
+    }
+    const trace: RecordTrace = {
+      record,
+      audit_log: this.store.getAuditLog(record.id)
+    };
+    const source = record.source_id ? this.store.getSource(record.source_id) : undefined;
+    if (source) {
+      trace.source = source;
+    }
+    return trace;
   }
 
   async getAuditLog(entityId?: string): Promise<Record<string, unknown>[]> {
