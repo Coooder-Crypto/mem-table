@@ -108,6 +108,58 @@ test("http ask answers bench progress after committed proposals", async () => {
   }
 });
 
+test("http trace endpoints expose proposal and record sources", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  await runtime.installPack(fileURLToPath(new URL("../../../packs/fitness", import.meta.url)));
+
+  try {
+    await handleHttpRequest(runtime, {
+      method: "POST",
+      url: "/v1/observe",
+      body: {
+        id: "evt_server_trace_1",
+        agent: "custom",
+        event_type: "user_message",
+        role: "user",
+        content: "今天卧推 65kg 5x5",
+        occurred_at: "2026-06-27T10:00:00.000Z"
+      }
+    });
+
+    const [proposal] = await runtime.listProposals();
+    const proposalTraceResponse = await handleHttpRequest(runtime, {
+      method: "GET",
+      url: `/v1/proposals/${proposal.id}`
+    });
+    assert.equal(proposalTraceResponse.statusCode, 200);
+    assert.equal(proposalTraceResponse.body.proposal.id, proposal.id);
+    assert.equal(proposalTraceResponse.body.source.excerpt, "今天卧推 65kg 5x5");
+
+    const record = await runtime.commitProposal(proposal.id, { actor: "test" });
+    const recordTraceResponse = await handleHttpRequest(runtime, {
+      method: "GET",
+      url: `/v1/records/${record.id}`
+    });
+    assert.equal(recordTraceResponse.statusCode, 200);
+    assert.equal(recordTraceResponse.body.record.id, record.id);
+    assert.equal(recordTraceResponse.body.source.excerpt, "今天卧推 65kg 5x5");
+
+    const missingResponse = await handleHttpRequest(runtime, {
+      method: "GET",
+      url: "/v1/proposals/missing"
+    });
+    assert.equal(missingResponse.statusCode, 404);
+  } finally {
+    runtime.close();
+  }
+});
+
 test("mcp tools expose observe and ask", async () => {
   const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
   const runtime = await MemTableRuntime.open({
