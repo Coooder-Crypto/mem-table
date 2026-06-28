@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MemTableRuntime } from "@memtable/core";
 import { startHttpServer, startMcpStdioServer } from "@memtable/server";
@@ -55,6 +55,8 @@ function printHelp(): void {
   doctor [--endpoint http://127.0.0.1:3838]
   agent enable hermes [--endpoint http://127.0.0.1:3838]
   agent enable openclaw [--endpoint http://127.0.0.1:3838]
+  agent doctor hermes [--endpoint http://127.0.0.1:3838]
+  agent doctor openclaw [--endpoint http://127.0.0.1:3838]
   proposal list [status]
   proposal commit <id>
   proposal reject <id>
@@ -256,6 +258,11 @@ async function httpHealthCheck(endpoint: string): Promise<DoctorCheck> {
 async function agent(args: string[]): Promise<void> {
   const subcommand = args[0];
   const agentName = args[1];
+  if (subcommand === "doctor") {
+    await agentDoctor(args);
+    return;
+  }
+
   if (subcommand !== "enable") {
     throw new Error(`Unknown agent command: ${subcommand ?? ""}`);
   }
@@ -296,6 +303,140 @@ async function agent(args: string[]): Promise<void> {
   }
 
   throw new Error(`Unsupported agent enhancer: ${agentName ?? ""}`);
+}
+
+interface AgentConfig {
+  agent?: unknown;
+  endpoint?: unknown;
+  package?: unknown;
+  pluginId?: unknown;
+  install?: unknown;
+}
+
+async function agentDoctor(args: string[]): Promise<void> {
+  const agentName = supportedAgentName(requiredArg(args[1], "agent name"));
+  const configPath = `.memtable/agents/${agentName}.json`;
+  const checks: DoctorCheck[] = [];
+  const config = await readAgentConfig(configPath, checks, agentName);
+  const expectedPackage = agentName === "hermes" ? "@memtable/agent-hermes" : "@memtable/openclaw-plugin";
+  const expectedInstallCommand =
+    agentName === "hermes"
+      ? "hermes plugins install Coooder-Crypto/memtable-hermes --enable"
+      : "openclaw plugins install npm:@memtable/openclaw-plugin";
+
+  if (config) {
+    checks.push(
+      config.agent === agentName
+        ? {
+            name: "agent_name",
+            status: "ok",
+            message: `Agent config targets ${agentName}.`
+          }
+        : {
+            name: "agent_name",
+            status: "error",
+            message: `Agent config has unexpected agent value: ${String(config.agent)}.`,
+            fix: `Run \`memtable agent enable ${agentName}\`.`
+          }
+    );
+
+    checks.push(
+      config.package === expectedPackage
+        ? {
+            name: "agent_package",
+            status: "ok",
+            message: `Agent package is ${expectedPackage}.`
+          }
+        : {
+            name: "agent_package",
+            status: "warn",
+            message: `Agent package is not ${expectedPackage}.`,
+            fix: `Run \`memtable agent enable ${agentName}\`.`
+          }
+    );
+
+    checks.push(
+      config.pluginId === "memtable"
+        ? {
+            name: "plugin_id",
+            status: "ok",
+            message: "Plugin id is memtable."
+          }
+        : {
+            name: "plugin_id",
+            status: "warn",
+            message: `Plugin id is unexpected: ${String(config.pluginId)}.`,
+            fix: `Run \`memtable agent enable ${agentName}\`.`
+          }
+    );
+
+    const install = Array.isArray(config.install) ? config.install : [];
+    checks.push(
+      install.includes(expectedInstallCommand)
+        ? {
+            name: "install_hint",
+            status: "ok",
+            message: "Install command is recorded."
+          }
+        : {
+            name: "install_hint",
+            status: "warn",
+            message: "Expected install command is missing from agent config.",
+            fix: expectedInstallCommand
+          }
+    );
+  }
+
+  const endpoint = readFlag(args, "--endpoint") ?? stringValue(config?.endpoint) ?? "http://127.0.0.1:3838";
+  checks.push(await httpHealthCheck(endpoint));
+  printJson({
+    status: reportStatus(checks),
+    agent: agentName,
+    checks
+  });
+}
+
+async function readAgentConfig(
+  configPath: string,
+  checks: DoctorCheck[],
+  agentName: "hermes" | "openclaw"
+): Promise<AgentConfig | undefined> {
+  if (!(await fileExists(configPath))) {
+    checks.push({
+      name: "agent_config",
+      status: "error",
+      message: `${configPath} is missing.`,
+      fix: `Run \`memtable agent enable ${agentName}\`.`
+    });
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as unknown;
+    if (!isObject(parsed)) {
+      checks.push({
+        name: "agent_config",
+        status: "error",
+        message: `${configPath} does not contain a JSON object.`,
+        fix: `Run \`memtable agent enable ${agentName}\`.`
+      });
+      return undefined;
+    }
+    checks.push({
+      name: "agent_config",
+      status: "ok",
+      message: `${configPath} exists.`
+    });
+    return parsed;
+  } catch (error) {
+    checks.push({
+      name: "agent_config",
+      status: "error",
+      message: error instanceof Error ? error.message : String(error),
+      fix: `Run \`memtable agent enable ${agentName}\`.`
+    });
+    return undefined;
+  }
 }
 
 async function writeAgentConfig(input: {
@@ -488,6 +629,21 @@ function reportStatus(checks: DoctorCheck[]): DoctorStatus {
     return "warn";
   }
   return "ok";
+}
+
+function supportedAgentName(value: string): "hermes" | "openclaw" {
+  if (value === "hermes" || value === "openclaw") {
+    return value;
+  }
+  throw new Error(`Unsupported agent enhancer: ${value}`);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readFlag(args: string[], flag: string): string | undefined {
