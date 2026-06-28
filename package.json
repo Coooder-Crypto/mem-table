@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
+    "demo:fitness": "pnpm build && node scripts/demo-fitness-flow.mjs",
     "test": "pnpm build && pnpm -r test",
     "typecheck": "pnpm build && pnpm -r typecheck"
   },
