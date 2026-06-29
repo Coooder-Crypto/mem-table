@@ -166,6 +166,8 @@ node packages/cli/dist/index.js proposal commit --all --schema fitness.workout
 node packages/cli/dist/index.js proposal reject --all
 ```
 
+The same review workflow is exposed over HTTP and MCP so agents can list, commit, or reject matching proposals without shelling out to the CLI.
+
 The `agent-work` pack can also turn task logs such as:
 
 ```text
