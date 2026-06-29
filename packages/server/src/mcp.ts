@@ -1,6 +1,13 @@
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 import { MemTableRuntime, type AgentEvent } from "@memtable/core";
+import {
+  commitAllProposals,
+  listFilteredProposals,
+  proposalStatusValue,
+  rejectAllProposals,
+  stringFilterValue
+} from "./proposal-review.js";
 
 export interface JsonRpcRequest {
   jsonrpc?: "2.0";
@@ -73,7 +80,8 @@ const TOOL_DEFINITIONS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        status: { type: "string" }
+        status: { type: "string" },
+        schema: { type: "string" }
       }
     }
   },
@@ -102,6 +110,18 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "memtable.proposal.commit_all",
+    description: "Commit matching pending MemTable proposals into records.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        status: { type: "string" },
+        schema: { type: "string" }
+      }
+    }
+  },
+  {
     name: "memtable.proposal.reject",
     description: "Reject a proposal.",
     inputSchema: {
@@ -110,6 +130,18 @@ const TOOL_DEFINITIONS = [
       required: ["id"],
       properties: {
         id: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "memtable.proposal.reject_all",
+    description: "Reject matching pending MemTable proposals.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        status: { type: "string" },
+        schema: { type: "string" }
       }
     }
   },
@@ -237,15 +269,34 @@ async function callTool(runtime: MemTableRuntime, name: string, input: unknown):
         ? runtime.queryTemplate(args.template)
         : runtime.query(args.query as Parameters<typeof runtime.query>[0]);
     case "memtable.proposal.list":
-      return runtime.listProposals(
-        typeof args.status === "string" ? (args.status as Parameters<typeof runtime.listProposals>[0]) : undefined
-      );
+      return listFilteredProposals(runtime, {
+        status: proposalStatusValue(args.status),
+        schema: stringFilterValue(args.schema)
+      });
     case "memtable.proposal.show":
       return runtime.traceProposal(requiredString(args, "id"));
     case "memtable.proposal.commit":
       return runtime.commitProposal(requiredString(args, "id"), { actor: "mcp" });
+    case "memtable.proposal.commit_all":
+      return commitAllProposals(
+        runtime,
+        {
+          status: proposalStatusValue(args.status),
+          schema: stringFilterValue(args.schema)
+        },
+        "mcp"
+      );
     case "memtable.proposal.reject":
       return runtime.rejectProposal(requiredString(args, "id"), { actor: "mcp" });
+    case "memtable.proposal.reject_all":
+      return rejectAllProposals(
+        runtime,
+        {
+          status: proposalStatusValue(args.status),
+          schema: stringFilterValue(args.schema)
+        },
+        "mcp"
+      );
     case "memtable.record.show":
       return runtime.traceRecord(requiredString(args, "id"));
     case "memtable.pack.list":
