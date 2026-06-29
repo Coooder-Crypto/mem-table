@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { MemTableRuntime, watchLogs } from "../dist/index.js";
+import { followLogs, MemTableRuntime, watchLogs } from "../dist/index.js";
 
 test("runtime initializes sqlite and commits a proposal into a record", async () => {
   const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
@@ -298,3 +298,161 @@ test("log watcher observes jsonl files and deduplicates repeated scans", async (
 
   runtime.close();
 });
+
+test("log watcher can follow appended log lines", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const logPath = join(dir, "agent.jsonl");
+  await writeFile(logPath, "");
+
+  const controller = new AbortController();
+  const batches = [];
+  const safetyTimeout = setTimeout(() => {
+    controller.abort();
+  }, 1000);
+
+  try {
+    const followPromise = followLogs(runtime, {
+      path: dir,
+      agent: "custom",
+      pollIntervalMs: 10,
+      signal: controller.signal,
+      onResult: (result) => {
+        batches.push(result);
+        controller.abort();
+      }
+    });
+
+    await delay(30);
+    await appendFile(
+      logPath,
+      `${JSON.stringify({
+        id: "log_evt_follow_1",
+        event_type: "user_message",
+        role: "user",
+        content: "今天卧推 67.5kg 5x5",
+        occurred_at: "2026-06-28T10:00:00.000Z"
+      })}\n`
+    );
+
+    await followPromise;
+    assert.equal(batches.length, 1);
+    assert.equal(batches[0].files_scanned, 1);
+    assert.equal(batches[0].lines_scanned, 1);
+    assert.equal(batches[0].events_observed, 1);
+    assert.equal(batches[0].proposals_created, 1);
+
+    const proposals = await runtime.listProposals();
+    assert.equal(proposals.length, 1);
+    assert.equal(proposals[0]?.schema_name, "fitness.workout");
+  } finally {
+    clearTimeout(safetyTimeout);
+    runtime.close();
+  }
+});
+
+test("log watcher maps Hermes lifecycle log lines", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const logPath = join(dir, "hermes.jsonl");
+  await writeFile(
+    logPath,
+    `${JSON.stringify({
+      event_name: "pre_gateway_dispatch",
+      payload: {
+        sessionId: "s-hermes",
+        messageId: "m-hermes",
+        prompt: "今天卧推 72.5kg 5x5",
+        occurred_at: "2026-06-28T12:00:00.000Z"
+      }
+    })}\n`
+  );
+
+  const result = await watchLogs(runtime, {
+    path: dir,
+    agent: "hermes"
+  });
+
+  assert.equal(result.events_observed, 1);
+  assert.equal(result.proposals_created, 1);
+
+  const [proposal] = await runtime.listProposals();
+  assert.equal(proposal?.schema_name, "fitness.workout");
+  const trace = await runtime.traceProposal(proposal.id);
+  assert.equal(trace.source?.agent, "hermes");
+  assert.equal(trace.source?.event_type, "user_message");
+  assert.equal(trace.source?.session_id, "s-hermes");
+  assert.equal(trace.source?.message_id, "m-hermes");
+  assert.equal(trace.source?.excerpt, "今天卧推 72.5kg 5x5");
+
+  runtime.close();
+});
+
+test("log watcher maps OpenClaw tool result log lines", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-core-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  const packPath = fileURLToPath(new URL("../../../packs/fitness", import.meta.url));
+  await runtime.installPack(packPath);
+
+  const logPath = join(dir, "openclaw.jsonl");
+  await writeFile(
+    logPath,
+    `${JSON.stringify({
+      eventName: "after_tool_call",
+      payload: {
+        sessionId: "s-openclaw",
+        messageId: "m-openclaw",
+        toolName: "workout_logger",
+        result: "今天体重 89.8kg",
+        occurred_at: "2026-06-28T13:00:00.000Z"
+      }
+    })}\n`
+  );
+
+  const result = await watchLogs(runtime, {
+    path: dir,
+    agent: "openclaw"
+  });
+
+  assert.equal(result.events_observed, 1);
+  assert.equal(result.proposals_created, 1);
+
+  const [proposal] = await runtime.listProposals();
+  assert.equal(proposal?.schema_name, "fitness.body_weight");
+  const trace = await runtime.traceProposal(proposal.id);
+  assert.equal(trace.source?.agent, "openclaw");
+  assert.equal(trace.source?.event_type, "tool_result");
+  assert.equal(trace.source?.session_id, "s-openclaw");
+  assert.equal(trace.source?.message_id, "m-openclaw");
+  assert.equal(trace.source?.excerpt, "今天体重 89.8kg");
+  assert.equal(trace.source?.metadata?.event_name, "after_tool_call");
+
+  runtime.close();
+});
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}

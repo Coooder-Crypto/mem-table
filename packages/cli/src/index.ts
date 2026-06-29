@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
-import { MemTableRuntime, watchLogs, type AgentName } from "@memtable/core";
+import { followLogs, MemTableRuntime, watchLogs, type AgentName } from "@memtable/core";
 import { startHttpServer, startMcpStdioServer } from "@memtable/server";
 
 const args = process.argv.slice(2);
@@ -52,7 +53,7 @@ function printHelp(): void {
   query-template list
   query <template_name>
   ask <question>
-  watch <path> --agent <hermes|openclaw|custom>
+  watch <path> --agent <hermes|openclaw|custom> [--follow] [--interval-ms 1000]
   serve --http [--port 3838]
   serve --mcp
   doctor [--endpoint http://127.0.0.1:3838]
@@ -60,10 +61,10 @@ function printHelp(): void {
   agent enable openclaw [--endpoint http://127.0.0.1:3838]
   agent doctor hermes [--endpoint http://127.0.0.1:3838]
   agent doctor openclaw [--endpoint http://127.0.0.1:3838]
-  proposal list [status]
+  proposal list [status] [--schema <schema_name>]
   proposal show <id>
-  proposal commit <id>
-  proposal reject <id>
+  proposal commit <id|--all> [--schema <schema_name>]
+  proposal reject <id|--all> [--schema <schema_name>]
   record list [schema_name]
   record show <id>`);
 }
@@ -145,6 +146,26 @@ interface DoctorCheck {
 interface DoctorReport {
   status: DoctorStatus;
   checks: DoctorCheck[];
+}
+
+interface AgentDoctorReport extends DoctorReport {
+  agent: "hermes" | "openclaw";
+  watch: AgentWatchSuggestion;
+}
+
+interface AgentWatchSuggestion {
+  mode: "log_watch";
+  agent: "hermes" | "openclaw";
+  path: string;
+  command: string;
+  interval_ms: number;
+  candidates: AgentWatchCandidate[];
+  note: string;
+}
+
+interface AgentWatchCandidate {
+  path: string;
+  exists: boolean;
 }
 
 async function doctor(args: string[]): Promise<void> {
@@ -394,11 +415,63 @@ async function agentDoctor(args: string[]): Promise<void> {
 
   const endpoint = readFlag(args, "--endpoint") ?? stringValue(config?.endpoint) ?? "http://127.0.0.1:3838";
   checks.push(await httpHealthCheck(endpoint));
+  const watchSuggestion = await agentWatchSuggestion(agentName);
+  checks.push(watchPathCheck(watchSuggestion));
   printJson({
     status: reportStatus(checks),
     agent: agentName,
+    watch: watchSuggestion,
     checks
-  });
+  } satisfies AgentDoctorReport);
+}
+
+async function agentWatchSuggestion(agentName: "hermes" | "openclaw"): Promise<AgentWatchSuggestion> {
+  const candidates = await Promise.all(
+    agentLogCandidatePaths(agentName).map(async (path) => ({
+      path,
+      exists: await fileExists(expandHome(path))
+    }))
+  );
+  const selected = candidates.find((candidate) => candidate.exists) ?? candidates[0];
+  const path = selected?.path ?? (agentName === "hermes" ? "~/.hermes/logs" : "~/.openclaw/runs");
+  const command = `memtable watch ${path} --agent ${agentName} --follow`;
+  return {
+    mode: "log_watch",
+    agent: agentName,
+    path,
+    command,
+    interval_ms: 1000,
+    candidates,
+    note: selected?.exists
+      ? "Use this command for lightweight log-based ingestion without installing the native enhancer."
+      : "No known log path was found. Use the command after confirming the agent log directory, or replace the path with your actual log directory."
+  };
+}
+
+function watchPathCheck(suggestion: AgentWatchSuggestion): DoctorCheck {
+  const found = suggestion.candidates.find((candidate) => candidate.exists);
+  if (found) {
+    return {
+      name: "log_watch_path",
+      status: "ok",
+      message: `Detected log path ${found.path}.`,
+      fix: suggestion.command
+    };
+  }
+
+  return {
+    name: "log_watch_path",
+    status: "warn",
+    message: "No known log path was detected for lightweight watch mode.",
+    fix: suggestion.command
+  };
+}
+
+function agentLogCandidatePaths(agentName: "hermes" | "openclaw"): string[] {
+  if (agentName === "hermes") {
+    return ["~/.hermes/logs", "~/.local/share/hermes/logs"];
+  }
+  return ["~/.openclaw/runs", "~/.openclaw/logs"];
 }
 
 async function readAgentConfig(
@@ -551,8 +624,33 @@ async function ask(args: string[]): Promise<void> {
 async function watch(args: string[]): Promise<void> {
   const path = requiredArg(args[0], "log path");
   const agent = agentNameValue(readFlag(args, "--agent") ?? "custom");
+  const follow = args.includes("--follow");
+  const pollIntervalMs = Number(readFlag(args, "--interval-ms") ?? "1000");
+  if (!Number.isInteger(pollIntervalMs) || pollIntervalMs <= 0) {
+    throw new Error(`Invalid --interval-ms value: ${String(readFlag(args, "--interval-ms"))}`);
+  }
+
   const runtime = await openRuntime();
   try {
+    if (follow) {
+      const controller = new AbortController();
+      process.once("SIGINT", () => {
+        controller.abort();
+      });
+      process.once("SIGTERM", () => {
+        controller.abort();
+      });
+      console.error(`MemTable watching ${path} for ${agent} logs every ${pollIntervalMs}ms`);
+      await followLogs(runtime, {
+        path,
+        agent,
+        pollIntervalMs,
+        signal: controller.signal,
+        onResult: printJson
+      });
+      return;
+    }
+
     printJson(
       await watchLogs(runtime, {
         path,
@@ -569,17 +667,38 @@ async function proposal(args: string[]): Promise<void> {
   const runtime = await openRuntime();
   try {
     if (subcommand === "list") {
-      const status = args[1] as Parameters<typeof runtime.listProposals>[0];
-      const proposals = await runtime.listProposals(status);
+      const status = proposalStatusValue(readFlag(args, "--status") ?? positionalArg(args, 1));
+      const proposals = await listFilteredProposals(runtime, {
+        status,
+        schema: readFlag(args, "--schema")
+      });
       printJson(proposals);
     } else if (subcommand === "show") {
       const id = requiredArg(args[1], "proposal id");
       printJson(await runtime.traceProposal(id));
     } else if (subcommand === "commit") {
+      if (args.includes("--all")) {
+        printJson(
+          await commitAllProposals(runtime, {
+            status: proposalStatusValue(readFlag(args, "--status")),
+            schema: readFlag(args, "--schema")
+          })
+        );
+        return;
+      }
       const id = requiredArg(args[1], "proposal id");
       const record = await runtime.commitProposal(id, { actor: "cli" });
       printJson(record);
     } else if (subcommand === "reject") {
+      if (args.includes("--all")) {
+        printJson(
+          await rejectAllProposals(runtime, {
+            status: proposalStatusValue(readFlag(args, "--status")),
+            schema: readFlag(args, "--schema")
+          })
+        );
+        return;
+      }
       const id = requiredArg(args[1], "proposal id");
       const rejected = await runtime.rejectProposal(id, { actor: "cli" });
       printJson(rejected);
@@ -589,6 +708,89 @@ async function proposal(args: string[]): Promise<void> {
   } finally {
     runtime.close();
   }
+}
+
+type ProposalStatusFilter = Parameters<MemTableRuntime["listProposals"]>[0];
+
+interface ProposalFilter {
+  status: ProposalStatusFilter | undefined;
+  schema: string | undefined;
+}
+
+interface BatchProposalResult<T> {
+  action: "commit" | "reject";
+  matched: number;
+  processed: number;
+  filters: {
+    status: string | string[];
+    schema?: string;
+  };
+  results: T[];
+}
+
+async function listFilteredProposals(
+  runtime: MemTableRuntime,
+  filter: ProposalFilter
+): Promise<Awaited<ReturnType<MemTableRuntime["listProposals"]>>> {
+  const proposals = await runtime.listProposals(filter.status);
+  return filter.schema ? proposals.filter((proposal) => proposal.schema_name === filter.schema) : proposals;
+}
+
+async function commitAllProposals(
+  runtime: MemTableRuntime,
+  filter: ProposalFilter
+): Promise<BatchProposalResult<Awaited<ReturnType<MemTableRuntime["commitProposal"]>>>> {
+  const proposals = await reviewableProposals(runtime, filter);
+  const records = [];
+  for (const proposal of proposals) {
+    records.push(await runtime.commitProposal(proposal.id, { actor: "cli" }));
+  }
+
+  return {
+    action: "commit",
+    matched: proposals.length,
+    processed: records.length,
+    filters: batchFilters(filter),
+    results: records
+  };
+}
+
+async function rejectAllProposals(
+  runtime: MemTableRuntime,
+  filter: ProposalFilter
+): Promise<BatchProposalResult<Awaited<ReturnType<MemTableRuntime["rejectProposal"]>>>> {
+  const proposals = await reviewableProposals(runtime, filter);
+  const rejected = [];
+  for (const proposal of proposals) {
+    rejected.push(await runtime.rejectProposal(proposal.id, { actor: "cli" }));
+  }
+
+  return {
+    action: "reject",
+    matched: proposals.length,
+    processed: rejected.length,
+    filters: batchFilters(filter),
+    results: rejected
+  };
+}
+
+async function reviewableProposals(runtime: MemTableRuntime, filter: ProposalFilter): Promise<Awaited<ReturnType<MemTableRuntime["listProposals"]>>> {
+  if (filter.status) {
+    return listFilteredProposals(runtime, filter);
+  }
+
+  const proposals = await listFilteredProposals(runtime, {
+    status: undefined,
+    schema: filter.schema
+  });
+  return proposals.filter((proposal) => proposal.status === "pending" || proposal.status === "needs_review");
+}
+
+function batchFilters(filter: ProposalFilter): BatchProposalResult<unknown>["filters"] {
+  return {
+    status: filter.status ?? ["pending", "needs_review"],
+    ...(filter.schema ? { schema: filter.schema } : {})
+  };
 }
 
 async function record(args: string[]): Promise<void> {
@@ -638,6 +840,16 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
+function expandHome(path: string): string {
+  if (path === "~") {
+    return homedir();
+  }
+  if (path.startsWith("~/")) {
+    return `${homedir()}${path.slice(1)}`;
+  }
+  return path;
+}
+
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -672,6 +884,16 @@ function agentNameValue(value: string): AgentName {
   throw new Error(`Unsupported agent: ${value}`);
 }
 
+function proposalStatusValue(value: string | undefined): ProposalStatusFilter {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "pending" || value === "needs_review" || value === "committed" || value === "rejected") {
+    return value;
+  }
+  throw new Error(`Unsupported proposal status: ${value}`);
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -686,4 +908,9 @@ function readFlag(args: string[], flag: string): string | undefined {
     return undefined;
   }
   return args[index + 1];
+}
+
+function positionalArg(args: string[], index: number): string | undefined {
+  const value = args[index];
+  return value && !value.startsWith("--") ? value : undefined;
 }

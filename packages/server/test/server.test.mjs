@@ -52,6 +52,65 @@ test("http observer creates fitness proposals", async () => {
   }
 });
 
+test("http proposal review supports schema filters and batch actions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  await runtime.installPack(fileURLToPath(new URL("../../../packs/fitness", import.meta.url)));
+
+  try {
+    await handleHttpRequest(runtime, {
+      method: "POST",
+      url: "/v1/observe",
+      body: {
+        id: "evt_server_batch_1",
+        agent: "custom",
+        event_type: "user_message",
+        role: "user",
+        content: "今天卧推 65kg 5x5，体重 90.4kg",
+        occurred_at: "2026-06-29T10:00:00.000Z"
+      }
+    });
+
+    const listResponse = await handleHttpRequest(runtime, {
+      method: "GET",
+      url: "/v1/proposals?status=pending&schema=fitness.workout"
+    });
+    assert.equal(listResponse.statusCode, 200);
+    assert.equal(listResponse.body.length, 1);
+    assert.equal(listResponse.body[0].schema_name, "fitness.workout");
+
+    const commitAllResponse = await handleHttpRequest(runtime, {
+      method: "POST",
+      url: "/v1/proposals/commit-all",
+      body: {
+        schema: "fitness.workout"
+      }
+    });
+    assert.equal(commitAllResponse.statusCode, 200);
+    assert.equal(commitAllResponse.body.action, "commit");
+    assert.equal(commitAllResponse.body.matched, 1);
+    assert.equal(commitAllResponse.body.results[0].schema_name, "fitness.workout");
+
+    const rejectAllResponse = await handleHttpRequest(runtime, {
+      method: "POST",
+      url: "/v1/proposals/reject-all",
+      body: {}
+    });
+    assert.equal(rejectAllResponse.statusCode, 200);
+    assert.equal(rejectAllResponse.body.action, "reject");
+    assert.equal(rejectAllResponse.body.matched, 1);
+    assert.equal(rejectAllResponse.body.results[0].schema_name, "fitness.body_weight");
+    assert.equal(rejectAllResponse.body.results[0].status, "rejected");
+  } finally {
+    runtime.close();
+  }
+});
+
 test("http ask answers bench progress after committed proposals", async () => {
   const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
   const runtime = await MemTableRuntime.open({
@@ -178,6 +237,8 @@ test("mcp tools expose observe, ask, and trace tools", async () => {
     });
     assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.observe"));
     assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.proposal.show"));
+    assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.proposal.commit_all"));
+    assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.proposal.reject_all"));
     assert.ok(listResponse?.result.tools.some((tool) => tool.name === "memtable.record.show"));
 
     const observeResponse = await handleMcpRequest(runtime, {
@@ -268,3 +329,61 @@ test("mcp tools expose observe, ask, and trace tools", async () => {
     runtime.close();
   }
 });
+
+test("mcp proposal review supports schema filters and batch actions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-server-"));
+  const runtime = await MemTableRuntime.open({
+    storage: {
+      driver: "sqlite",
+      path: join(dir, "memtable.db")
+    }
+  });
+  await runtime.installPack(fileURLToPath(new URL("../../../packs/fitness", import.meta.url)));
+
+  try {
+    await callMcpTool(runtime, 1, "memtable.observe", {
+      id: "evt_mcp_batch_1",
+      agent: "custom",
+      event_type: "user_message",
+      role: "user",
+      content: "今天卧推 65kg 5x5，体重 90.4kg",
+      occurred_at: "2026-06-29T10:00:00.000Z"
+    });
+
+    const listed = await callMcpTool(runtime, 2, "memtable.proposal.list", {
+      status: "pending",
+      schema: "fitness.workout"
+    });
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].schema_name, "fitness.workout");
+
+    const committed = await callMcpTool(runtime, 3, "memtable.proposal.commit_all", {
+      schema: "fitness.workout"
+    });
+    assert.equal(committed.action, "commit");
+    assert.equal(committed.matched, 1);
+    assert.equal(committed.results[0].schema_name, "fitness.workout");
+
+    const rejected = await callMcpTool(runtime, 4, "memtable.proposal.reject_all", {});
+    assert.equal(rejected.action, "reject");
+    assert.equal(rejected.matched, 1);
+    assert.equal(rejected.results[0].schema_name, "fitness.body_weight");
+    assert.equal(rejected.results[0].status, "rejected");
+  } finally {
+    runtime.close();
+  }
+});
+
+async function callMcpTool(runtime, id, name, args) {
+  const response = await handleMcpRequest(runtime, {
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: {
+      name,
+      arguments: args
+    }
+  });
+  assert.equal(response?.error, undefined);
+  return JSON.parse(response.result.content[0].text);
+}

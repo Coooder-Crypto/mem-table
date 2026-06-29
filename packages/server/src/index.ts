@@ -1,5 +1,12 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { MemTableRuntime, type AgentEvent } from "@memtable/core";
+import {
+  commitAllProposals,
+  listFilteredProposals,
+  proposalStatusValue,
+  rejectAllProposals,
+  stringFilterValue
+} from "./proposal-review.js";
 export { handleMcpRequest, startMcpStdioServer } from "./mcp.js";
 
 export interface ServerOptions {
@@ -111,9 +118,37 @@ export async function handleHttpRequest(runtime: MemTableRuntime, request: HttpR
     }
 
     if (request.method === "GET" && url.pathname === "/v1/proposals") {
-      const status = url.searchParams.get("status") ?? undefined;
-      const proposals = await runtime.listProposals(status as Parameters<typeof runtime.listProposals>[0]);
+      const proposals = await listFilteredProposals(runtime, {
+        status: proposalStatusValue(url.searchParams.get("status")),
+        schema: stringFilterValue(url.searchParams.get("schema"))
+      });
       return { statusCode: 200, body: proposals };
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/proposals/commit-all") {
+      const body = isObject(request.body) ? request.body : {};
+      const result = await commitAllProposals(
+        runtime,
+        {
+          status: proposalStatusValue(body.status),
+          schema: stringFilterValue(body.schema)
+        },
+        "http"
+      );
+      return { statusCode: 200, body: result };
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/proposals/reject-all") {
+      const body = isObject(request.body) ? request.body : {};
+      const result = await rejectAllProposals(
+        runtime,
+        {
+          status: proposalStatusValue(body.status),
+          schema: stringFilterValue(body.schema)
+        },
+        "http"
+      );
+      return { statusCode: 200, body: result };
     }
 
     const proposalTraceMatch = url.pathname.match(/^\/v1\/proposals\/([^/]+)$/);
@@ -182,4 +217,8 @@ function writeJson(response: ServerResponse, statusCode: number, body: unknown):
     "content-type": "application/json; charset=utf-8"
   });
   response.end(`${JSON.stringify(body, null, 2)}\n`);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

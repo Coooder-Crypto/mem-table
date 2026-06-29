@@ -87,6 +87,12 @@ node packages/cli/dist/index.js watch ~/.hermes/logs --agent hermes
 node packages/cli/dist/index.js watch ~/.openclaw/runs --agent openclaw
 ```
 
+Keep watching appended log lines:
+
+```bash
+node packages/cli/dist/index.js watch ~/.hermes/logs --agent hermes --follow
+```
+
 In another terminal, inspect health and setup:
 
 ```bash
@@ -115,7 +121,7 @@ node packages/cli/dist/index.js agent enable openclaw
 node packages/cli/dist/index.js agent doctor openclaw
 ```
 
-The enable commands write local config under `.memtable/agents/` and print the native plugin install command for the target agent. The Hermes and OpenClaw enhancers are alpha adapters for the current MVP surface: tool registration, event mapping, and sidecar observation.
+The enable commands write local config under `.memtable/agents/` and print the native plugin install command for the target agent. The doctor commands also return a lightweight `watch.command` fallback, so users can start log-based ingestion with `memtable watch ... --follow` before installing a native enhancer. The Hermes and OpenClaw enhancers are alpha adapters for the current MVP surface: tool registration, event mapping, and sidecar observation.
 
 ## MCP Server
 
@@ -151,6 +157,16 @@ can become two proposals:
 - `fitness.body_weight`
 
 After commit, MemTable can answer trend questions from records instead of chat history.
+
+Review generated proposals:
+
+```bash
+node packages/cli/dist/index.js proposal list pending --schema fitness.workout
+node packages/cli/dist/index.js proposal commit --all --schema fitness.workout
+node packages/cli/dist/index.js proposal reject --all
+```
+
+The same review workflow is exposed over HTTP and MCP so agents can list, commit, or reject matching proposals without shelling out to the CLI.
 
 The `agent-work` pack can also turn task logs such as:
 
@@ -211,7 +227,7 @@ This is intentionally conservative for v0.1. More expressive extractors can be a
 
 ## Alpha Notes
 
-- `memtable watch` is a one-shot scanner, not a continuous tailer. Re-running it is safe because log events get stable ids and duplicate observations are ignored.
+- `memtable watch` scans once by default. Add `--follow` to poll for appended `.jsonl` or `.log` lines; this is a lightweight alpha tailer, not yet a platform-specific file-system watcher.
 - `memtable serve --http` and `memtable serve --mcp` are separate modes in the current CLI. Run them in separate processes when both surfaces are needed.
 - Node may print an experimental warning for `node:sqlite`; that is expected for this alpha runtime.
 - Hermes and OpenClaw enhancers are minimal native adapters. They validate the integration pattern but are not yet version-pinned against every upstream agent release.
