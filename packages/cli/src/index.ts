@@ -61,10 +61,10 @@ function printHelp(): void {
   agent enable openclaw [--endpoint http://127.0.0.1:3838]
   agent doctor hermes [--endpoint http://127.0.0.1:3838]
   agent doctor openclaw [--endpoint http://127.0.0.1:3838]
-  proposal list [status]
+  proposal list [status] [--schema <schema_name>]
   proposal show <id>
-  proposal commit <id>
-  proposal reject <id>
+  proposal commit <id|--all> [--schema <schema_name>]
+  proposal reject <id|--all> [--schema <schema_name>]
   record list [schema_name]
   record show <id>`);
 }
@@ -667,17 +667,38 @@ async function proposal(args: string[]): Promise<void> {
   const runtime = await openRuntime();
   try {
     if (subcommand === "list") {
-      const status = args[1] as Parameters<typeof runtime.listProposals>[0];
-      const proposals = await runtime.listProposals(status);
+      const status = proposalStatusValue(readFlag(args, "--status") ?? positionalArg(args, 1));
+      const proposals = await listFilteredProposals(runtime, {
+        status,
+        schema: readFlag(args, "--schema")
+      });
       printJson(proposals);
     } else if (subcommand === "show") {
       const id = requiredArg(args[1], "proposal id");
       printJson(await runtime.traceProposal(id));
     } else if (subcommand === "commit") {
+      if (args.includes("--all")) {
+        printJson(
+          await commitAllProposals(runtime, {
+            status: proposalStatusValue(readFlag(args, "--status")),
+            schema: readFlag(args, "--schema")
+          })
+        );
+        return;
+      }
       const id = requiredArg(args[1], "proposal id");
       const record = await runtime.commitProposal(id, { actor: "cli" });
       printJson(record);
     } else if (subcommand === "reject") {
+      if (args.includes("--all")) {
+        printJson(
+          await rejectAllProposals(runtime, {
+            status: proposalStatusValue(readFlag(args, "--status")),
+            schema: readFlag(args, "--schema")
+          })
+        );
+        return;
+      }
       const id = requiredArg(args[1], "proposal id");
       const rejected = await runtime.rejectProposal(id, { actor: "cli" });
       printJson(rejected);
@@ -687,6 +708,89 @@ async function proposal(args: string[]): Promise<void> {
   } finally {
     runtime.close();
   }
+}
+
+type ProposalStatusFilter = Parameters<MemTableRuntime["listProposals"]>[0];
+
+interface ProposalFilter {
+  status: ProposalStatusFilter | undefined;
+  schema: string | undefined;
+}
+
+interface BatchProposalResult<T> {
+  action: "commit" | "reject";
+  matched: number;
+  processed: number;
+  filters: {
+    status: string | string[];
+    schema?: string;
+  };
+  results: T[];
+}
+
+async function listFilteredProposals(
+  runtime: MemTableRuntime,
+  filter: ProposalFilter
+): Promise<Awaited<ReturnType<MemTableRuntime["listProposals"]>>> {
+  const proposals = await runtime.listProposals(filter.status);
+  return filter.schema ? proposals.filter((proposal) => proposal.schema_name === filter.schema) : proposals;
+}
+
+async function commitAllProposals(
+  runtime: MemTableRuntime,
+  filter: ProposalFilter
+): Promise<BatchProposalResult<Awaited<ReturnType<MemTableRuntime["commitProposal"]>>>> {
+  const proposals = await reviewableProposals(runtime, filter);
+  const records = [];
+  for (const proposal of proposals) {
+    records.push(await runtime.commitProposal(proposal.id, { actor: "cli" }));
+  }
+
+  return {
+    action: "commit",
+    matched: proposals.length,
+    processed: records.length,
+    filters: batchFilters(filter),
+    results: records
+  };
+}
+
+async function rejectAllProposals(
+  runtime: MemTableRuntime,
+  filter: ProposalFilter
+): Promise<BatchProposalResult<Awaited<ReturnType<MemTableRuntime["rejectProposal"]>>>> {
+  const proposals = await reviewableProposals(runtime, filter);
+  const rejected = [];
+  for (const proposal of proposals) {
+    rejected.push(await runtime.rejectProposal(proposal.id, { actor: "cli" }));
+  }
+
+  return {
+    action: "reject",
+    matched: proposals.length,
+    processed: rejected.length,
+    filters: batchFilters(filter),
+    results: rejected
+  };
+}
+
+async function reviewableProposals(runtime: MemTableRuntime, filter: ProposalFilter): Promise<Awaited<ReturnType<MemTableRuntime["listProposals"]>>> {
+  if (filter.status) {
+    return listFilteredProposals(runtime, filter);
+  }
+
+  const proposals = await listFilteredProposals(runtime, {
+    status: undefined,
+    schema: filter.schema
+  });
+  return proposals.filter((proposal) => proposal.status === "pending" || proposal.status === "needs_review");
+}
+
+function batchFilters(filter: ProposalFilter): BatchProposalResult<unknown>["filters"] {
+  return {
+    status: filter.status ?? ["pending", "needs_review"],
+    ...(filter.schema ? { schema: filter.schema } : {})
+  };
 }
 
 async function record(args: string[]): Promise<void> {
@@ -780,6 +884,16 @@ function agentNameValue(value: string): AgentName {
   throw new Error(`Unsupported agent: ${value}`);
 }
 
+function proposalStatusValue(value: string | undefined): ProposalStatusFilter {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "pending" || value === "needs_review" || value === "committed" || value === "rejected") {
+    return value;
+  }
+  throw new Error(`Unsupported proposal status: ${value}`);
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -794,4 +908,9 @@ function readFlag(args: string[], flag: string): string | undefined {
     return undefined;
   }
   return args[index + 1];
+}
+
+function positionalArg(args: string[], index: number): string | undefined {
+  const value = args[index];
+  return value && !value.startsWith("--") ? value : undefined;
 }
