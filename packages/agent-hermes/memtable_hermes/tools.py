@@ -145,6 +145,17 @@ def _register_tool(ctx: Any, name: str, description: str, parameters: dict[str, 
 
     if hasattr(ctx, "register_tool"):
         try:
+            ctx.register_tool(
+                name=name,
+                toolset="memtable",
+                schema=parameters,
+                handler=handler,
+                description=description,
+            )
+            return
+        except TypeError:
+            pass
+        try:
             ctx.register_tool(name=name, description=description, parameters=parameters, handler=handler)
             return
         except TypeError:

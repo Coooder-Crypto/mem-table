@@ -16,6 +16,7 @@ test("cli exposes the memtable command list", async () => {
   assert.match(source, /doctor \[--endpoint/);
   assert.match(source, /agent enable hermes/);
   assert.match(source, /agent enable openclaw/);
+  assert.match(source, /agent install hermes --local/);
   assert.match(source, /agent doctor hermes/);
   assert.match(source, /agent doctor openclaw/);
   assert.match(source, /proposal list \[status\] \[--schema/);
@@ -43,6 +44,41 @@ test("agent doctor includes a lightweight watch command", async () => {
     assert.match(report.watch.command, new RegExp(`memtable watch .* --agent ${agent} --follow`));
     assert.equal(report.checks.some((check) => check.name === "log_watch_path"), true);
   }
+});
+
+test("agent install hermes installs and enables the local plugin", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memtable-cli-"));
+  const hermesHome = await mkdtemp(join(dir, "hermes-home-"));
+  const cliPath = new URL("../dist/index.js", import.meta.url).pathname;
+  await writeFile(join(hermesHome, "config.yaml"), "checkpoints:\n  enabled:\n    - memtable\n");
+
+  const install = JSON.parse(
+    await runCli(cliPath, ["agent", "install", "hermes", "--local", "--hermes-home", hermesHome], dir, {
+      HERMES_HOME: hermesHome
+    })
+  );
+  assert.equal(install.status, "ok");
+  assert.equal(install.plugin_dir, join(hermesHome, "plugins", "memtable"));
+
+  const manifest = await readFile(join(hermesHome, "plugins", "memtable", "plugin.yaml"), "utf8");
+  assert.match(manifest, /entrypoint: memtable_hermes:register/);
+  const entrypoint = await readFile(join(hermesHome, "plugins", "memtable", "__init__.py"), "utf8");
+  assert.match(entrypoint, /def register/);
+  const config = await readFile(join(hermesHome, "config.yaml"), "utf8");
+  assert.match(config, /checkpoints:/);
+  assert.match(config, /plugins:/);
+  assert.match(config, /enabled:/);
+  assert.match(config, /- memtable/);
+
+  const doctor = JSON.parse(
+    await runCli(cliPath, ["agent", "doctor", "hermes", "--hermes-home", hermesHome, "--endpoint", "http://127.0.0.1:9"], dir, {
+      HERMES_HOME: hermesHome
+    })
+  );
+  assert.equal(doctor.checks.some((check) => check.name === "hermes_plugin_dir" && check.status === "ok"), true);
+  assert.equal(doctor.checks.some((check) => check.name === "hermes_plugin_manifest" && check.status === "ok"), true);
+  assert.equal(doctor.checks.some((check) => check.name === "hermes_plugin_entrypoint" && check.status === "ok"), true);
+  assert.equal(doctor.checks.some((check) => check.name === "hermes_plugin_enabled" && check.status === "ok"), true);
 });
 
 test("proposal review supports schema filters and batch actions", async () => {
@@ -89,7 +125,13 @@ test("proposal review supports schema filters and batch actions", async () => {
   assert.equal(rejectResult.results[0].status, "rejected");
 });
 
-async function runCli(cliPath, args, cwd) {
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], { cwd });
+async function runCli(cliPath, args, cwd, env = {}) {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      ...env
+    }
+  });
   return stdout;
 }

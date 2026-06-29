@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { followLogs, MemTableRuntime, watchLogs, type AgentName } from "@memtable/core";
 import { startHttpServer, startMcpStdioServer } from "@memtable/server";
 
@@ -59,6 +60,7 @@ function printHelp(): void {
   doctor [--endpoint http://127.0.0.1:3838]
   agent enable hermes [--endpoint http://127.0.0.1:3838]
   agent enable openclaw [--endpoint http://127.0.0.1:3838]
+  agent install hermes --local [--hermes-home ~/.hermes] [--endpoint http://127.0.0.1:3838]
   agent doctor hermes [--endpoint http://127.0.0.1:3838]
   agent doctor openclaw [--endpoint http://127.0.0.1:3838]
   proposal list [status] [--schema <schema_name>]
@@ -288,6 +290,10 @@ async function agent(args: string[]): Promise<void> {
     await agentDoctor(args);
     return;
   }
+  if (subcommand === "install") {
+    await agentInstall(args);
+    return;
+  }
 
   if (subcommand !== "enable") {
     throw new Error(`Unknown agent command: ${subcommand ?? ""}`);
@@ -301,13 +307,12 @@ async function agent(args: string[]): Promise<void> {
       packageName: "@memtable/agent-hermes",
       pluginId: "memtable",
       install: [
-        "npm install -g @memtable/agent-hermes",
-        "hermes plugins install Coooder-Crypto/memtable-hermes --enable",
+        "memtable agent install hermes --local",
         "hermes gateway restart"
       ]
     });
     console.log(`Configured Hermes enhancer at ${endpoint}`);
-    console.log("Install with: hermes plugins install Coooder-Crypto/memtable-hermes --enable");
+    console.log("Install with: memtable agent install hermes --local");
     return;
   }
 
@@ -331,6 +336,49 @@ async function agent(args: string[]): Promise<void> {
   throw new Error(`Unsupported agent enhancer: ${agentName ?? ""}`);
 }
 
+async function agentInstall(args: string[]): Promise<void> {
+  const agentName = supportedAgentName(requiredArg(args[1], "agent name"));
+  if (agentName !== "hermes") {
+    throw new Error(`Local installer is not available for ${agentName}`);
+  }
+  if (!args.includes("--local")) {
+    throw new Error("Hermes installer currently requires --local");
+  }
+
+  const endpoint = readFlag(args, "--endpoint") ?? "http://127.0.0.1:3838";
+  const hermesHome = hermesHomePath(args);
+  const pluginDir = join(hermesHome, "plugins", "memtable");
+  const sourceDir = hermesPluginSourceDir();
+
+  await mkdir(dirname(pluginDir), { recursive: true });
+  await rm(pluginDir, { recursive: true, force: true });
+  await cp(sourceDir, pluginDir, {
+    recursive: true,
+    filter: (source) => !source.includes("__pycache__") && !source.endsWith(".pyc")
+  });
+  await enableHermesPlugin(hermesHome, "memtable");
+  await writeAgentConfig({
+    agent: "hermes",
+    endpoint,
+    packageName: "@memtable/agent-hermes",
+    pluginId: "memtable",
+    install: ["memtable agent install hermes --local", "hermes gateway restart"]
+  });
+
+  printJson({
+    status: "ok",
+    agent: "hermes",
+    hermes_home: hermesHome,
+    plugin_dir: pluginDir,
+    enabled: true,
+    next_steps: [
+      "node packages/cli/dist/index.js serve --http",
+      "hermes gateway restart",
+      "node packages/cli/dist/index.js agent doctor hermes"
+    ]
+  });
+}
+
 interface AgentConfig {
   agent?: unknown;
   endpoint?: unknown;
@@ -347,7 +395,7 @@ async function agentDoctor(args: string[]): Promise<void> {
   const expectedPackage = agentName === "hermes" ? "@memtable/agent-hermes" : "@memtable/openclaw-plugin";
   const expectedInstallCommand =
     agentName === "hermes"
-      ? "hermes plugins install Coooder-Crypto/memtable-hermes --enable"
+      ? "memtable agent install hermes --local"
       : "openclaw plugins install npm:@memtable/openclaw-plugin";
 
   if (config) {
@@ -415,6 +463,9 @@ async function agentDoctor(args: string[]): Promise<void> {
 
   const endpoint = readFlag(args, "--endpoint") ?? stringValue(config?.endpoint) ?? "http://127.0.0.1:3838";
   checks.push(await httpHealthCheck(endpoint));
+  if (agentName === "hermes") {
+    checks.push(...(await hermesInstallChecks(hermesHomePath(args))));
+  }
   const watchSuggestion = await agentWatchSuggestion(agentName);
   checks.push(watchPathCheck(watchSuggestion));
   printJson({
@@ -472,6 +523,118 @@ function agentLogCandidatePaths(agentName: "hermes" | "openclaw"): string[] {
     return ["~/.hermes/logs", "~/.local/share/hermes/logs"];
   }
   return ["~/.openclaw/runs", "~/.openclaw/logs"];
+}
+
+function hermesHomePath(args: string[]): string {
+  return expandHome(readFlag(args, "--hermes-home") ?? process.env.HERMES_HOME ?? "~/.hermes");
+}
+
+function hermesPluginSourceDir(): string {
+  return fileURLToPath(new URL("../../agent-hermes/memtable_hermes", import.meta.url));
+}
+
+async function enableHermesPlugin(hermesHome: string, pluginName: string): Promise<void> {
+  await mkdir(hermesHome, { recursive: true });
+  const configPath = join(hermesHome, "config.yaml");
+  const existing = (await fileExists(configPath)) ? await readFile(configPath, "utf8") : "";
+  await writeFile(configPath, enablePluginInYaml(existing, pluginName));
+}
+
+function enablePluginInYaml(input: string, pluginName: string): string {
+  if (pluginsEnabledListContains(input, pluginName)) {
+    return input.endsWith("\n") ? input : `${input}\n`;
+  }
+
+  const lines = input.length > 0 ? input.replace(/\s+$/u, "").split(/\r?\n/) : [];
+  const pluginsIndex = lines.findIndex((line) => line.trim() === "plugins:");
+  if (pluginsIndex < 0) {
+    return [...lines, "plugins:", "  enabled:", `    - ${pluginName}`, ""].join("\n");
+  }
+
+  const enabledIndex = findYamlChildKey(lines, pluginsIndex, "enabled");
+  if (enabledIndex < 0) {
+    lines.splice(pluginsIndex + 1, 0, "  enabled:", `    - ${pluginName}`);
+    return `${lines.join("\n")}\n`;
+  }
+
+  lines.splice(enabledIndex + 1, 0, `    - ${pluginName}`);
+  return `${lines.join("\n")}\n`;
+}
+
+function pluginsEnabledListContains(input: string, value: string): boolean {
+  const lines = input.split(/\r?\n/);
+  const pluginsIndex = lines.findIndex((line) => line.trim() === "plugins:");
+  if (pluginsIndex < 0) {
+    return false;
+  }
+  const enabledIndex = findYamlChildKey(lines, pluginsIndex, "enabled");
+  if (enabledIndex < 0) {
+    return false;
+  }
+  const enabledIndent = leadingSpaceCount(lines[enabledIndex] ?? "");
+  for (let index = enabledIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (line.trim() === "") {
+      continue;
+    }
+    if (leadingSpaceCount(line) <= enabledIndent) {
+      return false;
+    }
+    if (line.trim() === `- ${value}`) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function findYamlChildKey(lines: string[], parentIndex: number, key: string): number {
+  const parentIndent = leadingSpaceCount(lines[parentIndex] ?? "");
+  for (let index = parentIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (line.trim() === "") {
+      continue;
+    }
+    const indent = leadingSpaceCount(line);
+    if (indent <= parentIndent) {
+      return -1;
+    }
+    if (indent === parentIndent + 2 && line.trim() === `${key}:`) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function leadingSpaceCount(input: string): number {
+  return input.length - input.trimStart().length;
+}
+
+async function hermesInstallChecks(hermesHome: string): Promise<DoctorCheck[]> {
+  const pluginDir = join(hermesHome, "plugins", "memtable");
+  const configPath = join(hermesHome, "config.yaml");
+  const checks: DoctorCheck[] = [];
+
+  checks.push(await fileCheck("hermes_plugin_dir", pluginDir, "Run `memtable agent install hermes --local`."));
+  checks.push(await fileCheck("hermes_plugin_manifest", join(pluginDir, "plugin.yaml"), "Run `memtable agent install hermes --local`."));
+  checks.push(await fileCheck("hermes_plugin_entrypoint", join(pluginDir, "__init__.py"), "Run `memtable agent install hermes --local`."));
+
+  const config = (await fileExists(configPath)) ? await readFile(configPath, "utf8") : "";
+  checks.push(
+    pluginsEnabledListContains(config, "memtable")
+      ? {
+          name: "hermes_plugin_enabled",
+          status: "ok",
+          message: "Hermes config enables the memtable plugin."
+        }
+      : {
+          name: "hermes_plugin_enabled",
+          status: "error",
+          message: "Hermes config does not enable the memtable plugin.",
+          fix: "Run `memtable agent install hermes --local`."
+        }
+  );
+
+  return checks;
 }
 
 async function readAgentConfig(

@@ -37,6 +37,36 @@ assert ctx.skills[0][0] == "memtable"
 `);
 });
 
+test("hermes plugin supports the real register_tool signature", () => {
+  runPython(`
+from memtable_hermes import register
+
+class Context:
+    def __init__(self):
+        self.tools = []
+        self.hooks = []
+        self.skills = []
+    def register_tool(self, name, toolset, schema, handler, description="", **kwargs):
+        self.tools.append({
+            "name": name,
+            "toolset": toolset,
+            "schema": schema,
+            "handler": handler,
+            "description": description,
+        })
+    def register_hook(self, event_name, handler):
+        self.hooks.append((event_name, handler))
+    def register_skill(self, name, path):
+        self.skills.append((name, str(path)))
+
+ctx = register(Context(), endpoint="http://127.0.0.1:3838")
+tool_names = sorted(tool["name"] for tool in ctx.tools)
+assert "memtable_ask" in tool_names
+assert all(tool["toolset"] == "memtable" for tool in ctx.tools)
+assert all("type" in tool["schema"] for tool in ctx.tools)
+`);
+});
+
 test("hermes event mapper converts messages and tool results", () => {
   runPython(`
 from memtable_hermes import map_hermes_event
