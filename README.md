@@ -158,6 +158,14 @@ can become two proposals:
 
 After commit, MemTable can answer trend questions from records instead of chat history.
 
+Review generated proposals:
+
+```bash
+node packages/cli/dist/index.js proposal list pending --schema fitness.workout
+node packages/cli/dist/index.js proposal commit --all --schema fitness.workout
+node packages/cli/dist/index.js proposal reject --all
+```
+
 The `agent-work` pack can also turn task logs such as:
 
 ```text
