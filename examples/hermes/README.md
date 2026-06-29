@@ -7,6 +7,9 @@ memtable init
 memtable pack install packs/fitness
 memtable serve --http
 memtable agent enable hermes
+memtable agent install hermes --local
+hermes gateway restart
+memtable agent doctor hermes
 ```
 
 After the Hermes plugin is enabled, Hermes can observe interaction events and call:

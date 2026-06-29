@@ -111,6 +111,7 @@ Enable Hermes:
 
 ```bash
 node packages/cli/dist/index.js agent enable hermes
+node packages/cli/dist/index.js agent install hermes --local
 node packages/cli/dist/index.js agent doctor hermes
 ```
 
